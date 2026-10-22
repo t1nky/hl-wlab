@@ -40,6 +40,10 @@ Click a result to inspect damage or stand at that position.
 View → Keyboard & mouse lists these bindings. Empty filters
 offer Reset filters. Enter in a bookmark name saves it.
 
+Selectors support arrow keys, Enter to choose and Escape to cancel. Long lists
+include search; typing also opens a selector. Tab accepts the highlighted option
+and moves to the next control.
+
 **Below min** shows hits below the damage slider's threshold, including direct
 hits and wallbangs. It has its own color and toggle; shooter stance still applies.
 

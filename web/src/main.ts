@@ -22,6 +22,7 @@ import { initializeLibrary } from './ui/game-library.ts';
 import { movementKey, navigationAction, nextVisible } from './ui/navigation.ts';
 import { loadPrefs, PREFS, savePrefs } from './ui/preferences.ts';
 import { scanFraction } from './ui/scan-progress.ts';
+import { initializeSelectors, syncSelectors } from './ui/select.ts';
 import { initializeWeapons, selectedWeapon, selectedWeaponID, selectWeapon } from './ui/weapons.ts';
 import './style.css';
 import * as THREE from 'three';
@@ -327,6 +328,7 @@ function updateTarget(invalidate = true) {
     );
     targetMarker.position.fromArray(pose.aims[HEAD_AIM]);
     targetMarker.visible = true;
+    syncSelectors();
     if (invalidate) {
       invalidateScan('Target changed. Scan to update.');
     }
@@ -1451,6 +1453,7 @@ syncArmor();
 pointMaterial.depthTest = !$('xray').checked;
 updatePoints();
 design.initialize({ clearSelection, resetFilters });
+initializeSelectors();
 design.cut(cut.constant, Number($('cut').max));
 navigationHint();
 if (import.meta.env.PROD && 'serviceWorker' in navigator)
