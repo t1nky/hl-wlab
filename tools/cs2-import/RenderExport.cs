@@ -9,6 +9,7 @@ using SteamDatabase.ValvePak;
 using ValveResourceFormat;
 using ValveResourceFormat.IO;
 using ValveResourceFormat.ResourceTypes;
+using ValveResourceFormat.Serialization.KeyValues;
 using VMaterial = ValveResourceFormat.ResourceTypes.Material;
 
 // Render data never supplies bullet or player collision. All derived content stays in .local.
@@ -16,7 +17,9 @@ internal static class RenderExport
 {
     private const int TextureSize = 512;
     private sealed record TextureInfo(string File, int Width, int Height, long Bytes);
-    private sealed record MaterialInfo(string Path, string? Texture, bool KeepAlpha);
+    private sealed record MaterialInfo(string Path, string? Texture, bool KeepAlpha, string Shader,
+        int BlendMode, float AlphaCutoff, float Opacity, Dictionary<string, Vector4> Vectors,
+        Dictionary<string, float> Floats, Dictionary<string, long> Integers, string[] Layers, bool Tools);
     private sealed class Reporter : IProgress<string>
     {
         public void Report(string value) { /* Per-mesh VRF progress is too noisy; report per chunk below. */ }
@@ -37,10 +40,22 @@ internal static class RenderExport
             {
                 var color = new[] { "g_tColor", "g_tColor0", "g_tColor1", "g_tColorA", "g_tAlbedo", "g_tBaseColor" }
                     .Select(key => material.TextureParams.GetValueOrDefault(key)).FirstOrDefault(value => value != null);
-                var alpha = material.IntParams.GetValueOrDefault("F_TRANSLUCENT") > 0 ||
-                    material.IntParams.GetValueOrDefault("F_ALPHA_TEST") > 0 || material.ShaderName.Contains("glass");
+                var blend = material.ShaderName.EndsWith("static_overlay.vfx")
+                    ? (int)material.IntParams.GetValueOrDefault("F_BLEND_MODE") : 0;
+                if (blend == 0 && material.IntParams.GetValueOrDefault("F_ALPHA_TEST") > 0) blend = 2;
+                if (blend == 0 && (material.IntParams.GetValueOrDefault("F_TRANSLUCENT") > 0 || material.ShaderName.Contains("glass"))) blend = 1;
+                var alpha = blend != 0;
                 var key = Path.GetFileNameWithoutExtension(file.EndsWith("_c") ? file[..^2] : file);
-                var info = new MaterialInfo(file, color, alpha);
+                var layers = new List<string>();
+                if (material.ShaderName == "csgo_environment_blend.vfx") {
+                    if (material.TextureParams.TryGetValue("g_tColor2", out var second)) layers.Add(second);
+                    if (material.IntParams.GetValueOrDefault("F_ENABLE_LAYER_3") > 0 && material.TextureParams.TryGetValue("g_tColor3", out var third)) layers.Add(third);
+                }
+                var info = new MaterialInfo(file, color, alpha, material.ShaderName, blend,
+                    material.FloatParams.GetValueOrDefault("g_flAlphaTestReference", 0.5f),
+                    material.FloatParams.GetValueOrDefault("g_flOpacityScale", 1f),
+                    new(material.VectorParams), new(material.FloatParams),
+                    material.IntParams.ToDictionary(p => p.Key, p => (long)p.Value), layers.ToArray(), material.IntAttributes.ContainsKey("tools.toolsmaterial"));
                 if (Materials.TryGetValue(key, out var prior) && (prior.Texture != color || prior.KeepAlpha != alpha))
                     throw new InvalidDataException("Ambiguous render material basename: " + key);
                 Materials[key] = info;
@@ -61,7 +76,8 @@ internal static class RenderExport
         var timer = Stopwatch.StartNew();
         var fingerprint = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(
             collisionFingerprint + File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-import/RenderExport.cs")) +
-            File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-prepare.mjs")))));
+            File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-prepare.mjs")) +
+            File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-render-pack.mjs")))));
         var manifest = Path.Combine(output, "render.json");
         if (!force && File.Exists(manifest))
         {
@@ -90,7 +106,7 @@ internal static class RenderExport
         var chunks = new List<string>();
         var textures = new Dictionary<string, TextureInfo>();
         var warnings = new HashSet<string>();
-        var primitives = 0; var meshCount = 0; var triangleCount = 0L; var texturedTriangleCount = 0L; var materialCount = 0;
+        var primitives = 0; var meshCount = 0; var triangleCount = 0L; var texturedTriangleCount = 0L; var materialCount = 0; var excludedLods = 0;
         for (var i = 0; i < nodes.Length; i++)
         {
             Console.WriteLine($"Render chunk {i + 1}/{nodes.Length}: {nodes[i]} ({timer.Elapsed.TotalSeconds:F1} s)");
@@ -104,6 +120,7 @@ internal static class RenderExport
             };
             exporter.Export(node, destination);
             var gltf = JsonNode.Parse(File.ReadAllText(destination))!.AsObject();
+            excludedLods += FilterAggregateLods((WorldNode)node.DataBlock!, gltf);
             CompactGeometry(gltf, folder, $"chunk-{i:D3}");
             var images = new JsonArray(); var gltfTextures = new JsonArray();
             if (gltf["materials"] is JsonArray materials)
@@ -114,22 +131,31 @@ internal static class RenderExport
                     var material = materialNode!.AsObject();
                     var name = material["name"]!.GetValue<string>();
                     if (!loader.Materials.TryGetValue(name, out var source)) continue;
-                    material["extras"] = new JsonObject { ["sourceMaterial"] = source.Path };
+                    material["alphaMode"] = source.BlendMode == 2 ? "MASK" : source.BlendMode != 0 ? "BLEND" : "OPAQUE";
+                    if (source.BlendMode == 2) material["alphaCutoff"] = source.AlphaCutoff;
+                    material["extras"] = new JsonObject { ["sourceMaterial"] = source.Path, ["tools"] = source.Tools,
+                        ["cs2"] = new JsonObject { ["shader"] = source.Shader, ["blendMode"] = source.BlendMode,
+                            ["vertexPaint"] = source.Shader.Contains("foliage") ? "none" : source.Shader.Contains("environment") ? "environment" :
+                                source.Integers.GetValueOrDefault("F_PAINT_VERTEX_COLORS") > 0 || source.Integers.GetValueOrDefault("F_VERTEX_COLOR") > 0 ?
+                                source.Shader.Contains("static_overlay") ? "overlay" : "srgb" : "none",
+                            ["opacity"] = source.Opacity, ["uv"] = UvSettings(source, source.Shader.Contains("environment") ? "1" : ""),
+                            ["layers"] = new JsonArray() } };
                     if (source.Texture == null) continue;
-                    var key = source.Texture + "|" + source.KeepAlpha;
+                    int AddTexture(string texturePath, bool keepAlpha) {
+                    var key = texturePath + "|" + keepAlpha;
                     if (!textures.TryGetValue(key, out var texture))
                     {
-                        using var resource = rawLoader.LoadFileCompiled(source.Texture);
+                        using var resource = rawLoader.LoadFileCompiled(texturePath);
                         if (resource?.DataBlock is not Texture data)
                         {
-                            warnings.Add("Missing base texture: " + source.Texture); continue;
+                            throw new InvalidDataException("Missing base texture: " + texturePath);
                         }
                         var level = 0u;
                         while (level + 1 < data.NumMipLevels && Math.Max(data.Width >> (int)level, data.Height >> (int)level) > TextureSize) level++;
                         using var bitmap = data.GenerateBitmap(mipLevel: level);
                         // Color alpha often encodes reflectance rather than transparency.
                         // Keep it only when the material actually requests alpha blend/test.
-                        if (!source.KeepAlpha)
+                        if (!keepAlpha)
                         {
                             var pixels = bitmap.Pixels;
                             for (var pixel = 0; pixel < pixels.Length; pixel++) pixels[pixel] = pixels[pixel].WithAlpha(255);
@@ -141,16 +167,30 @@ internal static class RenderExport
                         using (var stream = File.Create(Path.Combine(folder, file))) encoded.SaveTo(stream);
                         texture = new TextureInfo(file, bitmap.Width, bitmap.Height, new FileInfo(Path.Combine(folder, file)).Length);
                         textures[key] = texture;
-                        if (Math.Max(bitmap.Width, bitmap.Height) > TextureSize) warnings.Add("Texture lacks small mip: " + source.Texture);
+                        if (Math.Max(bitmap.Width, bitmap.Height) > TextureSize) warnings.Add("Texture lacks small mip: " + texturePath);
                     }
                     var index = images.Count;
                     images.Add(new JsonObject { ["uri"] = texture.File });
                     gltfTextures.Add(new JsonObject { ["sampler"] = 0, ["source"] = index });
+                    return index;
+                    }
+                    var index = AddTexture(source.Texture, source.KeepAlpha);
                     material["pbrMetallicRoughness"]!["baseColorTexture"] = new JsonObject { ["index"] = index };
+                    foreach (var (layer, layerIndex) in source.Layers.Select((path, index) => (path, index)))
+                        material["extras"]!["cs2"]!["layers"]!.AsArray().Add(new JsonObject {
+                            ["texture"] = AddTexture(layer, false), ["uv"] = UvSettings(source, (layerIndex + 2).ToString()) });
                 }
             }
             gltf["images"] = images; gltf["textures"] = gltfTextures;
             gltf["samplers"] = new JsonArray(new JsonObject { ["magFilter"] = 9729, ["minFilter"] = 9987, ["wrapS"] = 10497, ["wrapT"] = 10497 });
+            PruneMeshes(gltf, mesh => {
+                var items = mesh["primitives"]!.AsArray();
+                foreach (var item in items.ToArray()) {
+                    var index = item!["material"]?.GetValue<int>();
+                    if (index.HasValue && gltf["materials"]![index.Value]!["extras"]?["tools"]?.GetValue<bool>() == true) items.Remove(item);
+                }
+                return items.Count == 0;
+            });
             if (gltf["meshes"] is JsonArray meshes)
             {
                 meshCount += meshes.Count;
@@ -191,18 +231,68 @@ internal static class RenderExport
         {
             schema = 1, map = "de_inferno", fingerprint, collisionFingerprint, preparedAt = DateTime.UtcNow,
             prepareMs = timer.Elapsed.TotalMilliseconds, chunks, gltfToSource, textureMaxSize = TextureSize,
-            meshCount, primitives, triangleCount, texturedTriangleCount, materialCount, textureCount = textures.Count,
+            meshCount, primitives, triangleCount, texturedTriangleCount, materialCount, excludedLods, textureCount = textures.Count,
             textureBytes = textures.Values.Sum(t => t.Bytes),
             estimatedTextureGpuBytes = textures.Values.Sum(t => (long)t.Width * t.Height * 4 * 4 / 3),
             totalBytes = files.Sum(f => f.bytes), files,
             warnings = warnings.Concat(new[] {
                 "Render geometry is for display only; separate vphys data drives shots and walking.",
-                "Base-color texture first layer only; no Source 2 layered blending, normal/roughness maps, baked lighting or shader parity.",
+                "Base-color layers use vertex weights; height-based layer blending, normal/roughness maps, baked lighting and full Source shader parity omitted.",
                 "Static world-node models only; entity-driven doors, breakables, movable props, skybox and live state omitted."
             }),
         };
         File.WriteAllText(manifest + ".tmp", JsonSerializer.Serialize(metadata)); File.Move(manifest + ".tmp", manifest, true);
         Console.WriteLine($"Textured Inferno: {triangleCount:N0} triangles, {primitives:N0} primitives, {textures.Count} base textures; {files.Sum(f => f.bytes) / 1048576.0:F1} MiB disk, {metadata.estimatedTextureGpuBytes / 1048576.0:F1} MiB estimated texture GPU; {timer.Elapsed.TotalSeconds:F2} s.");
+    }
+
+    // VRF's glTF exporter currently emits all aggregate LoDs; its renderer selects only
+    // the lowest present mask bit. Filter after export, so skipped fragments still consume
+    // their original transform entries and cannot shift later instance placements.
+    private static int FilterAggregateLods(WorldNode node, JsonObject gltf)
+    {
+        var excluded = new HashSet<string>();
+        foreach (var aggregate in node.AggregateSceneObjects) {
+            var model = aggregate.GetStringProperty("m_renderableModel");
+            if (model == null) continue;
+            var name = Path.GetFileNameWithoutExtension(model);
+            var fragments = aggregate.GetArray("m_aggregateMeshes");
+            uint combined = 0;
+            foreach (var fragment in fragments) combined |= fragment.GetUInt32Property("m_nLODGroupMask");
+            var lowestBit = combined & (~combined + 1);
+            for (var i = 0; i < fragments.Count; i++) {
+                var mask = fragments[i].GetUInt32Property("m_nLODGroupMask");
+                if (mask != 0 && (mask & lowestBit) == 0) excluded.Add($"{name}_fragment{i + 1}");
+            }
+        }
+        return PruneMeshes(gltf, mesh => excluded.Contains(mesh["name"]!.GetValue<string>()));
+    }
+
+    private static int PruneMeshes(JsonObject gltf, Func<JsonObject, bool> remove)
+    {
+        var meshes = gltf["meshes"]!.AsArray();
+        var map = new Dictionary<int, int>();
+        var kept = new JsonArray();
+        for (var i = 0; i < meshes.Count; i++) if (!remove(meshes[i]!.AsObject())) {
+            map[i] = kept.Count; kept.Add(meshes[i]!.DeepClone());
+        }
+        foreach (var item in gltf["nodes"]!.AsArray()) {
+            if (item!["mesh"] is not JsonNode old) continue;
+            if (map.TryGetValue(old.GetValue<int>(), out var next)) item["mesh"] = next;
+            else item.AsObject().Remove("mesh");
+        }
+        var removed = meshes.Count - kept.Count;
+        gltf["meshes"] = kept;
+        return removed;
+    }
+
+    private static JsonObject UvSettings(MaterialInfo material, string suffix)
+    {
+        var scale = material.Vectors.GetValueOrDefault("g_vTexCoordScale" + suffix, Vector4.One);
+        var offset = material.Vectors.GetValueOrDefault("g_vTexCoordOffset" + suffix);
+        var center = material.Vectors.GetValueOrDefault("g_vTexCoordCenter" + suffix, new Vector4(0.5f));
+        return new JsonObject { ["scale"] = new JsonArray(scale.X, scale.Y), ["offset"] = new JsonArray(offset.X, offset.Y),
+            ["center"] = new JsonArray(center.X, center.Y), ["rotation"] = material.Floats.GetValueOrDefault("g_flTexCoordRotation" + suffix),
+            ["channel"] = material.Integers.GetValueOrDefault("g_nUVSet" + suffix, 1) == 2 ? 1 : 0 };
     }
 
     private static void CompactGeometry(JsonObject gltf, string folder, string name)
@@ -252,10 +342,8 @@ internal static class RenderExport
                 var attributes = primitive!["attributes"]!.AsObject();
                 foreach (var key in attributes.Select(pair => pair.Key).ToArray())
                 {
-                    // COLOR_0 stores Source shader blend weights as well as color; first-layer
-                    // rendering must not multiply its RGB by these weights. Other UVs/tangents
-                    // are unused because this POC intentionally exports only base color.
-                    if (key is not ("POSITION" or "NORMAL" or "TEXCOORD_0")) attributes.Remove(key);
+                    // COLOR_0 is vertex paint; TEXCOORD4 carries environment layer weights.
+                    if (key is not ("POSITION" or "NORMAL" or "TEXCOORD_0" or "TEXCOORD_1" or "COLOR_0" or "_TEXCOORD_4")) attributes.Remove(key);
                     else attributes[key] = CopyAccessor(attributes[key]!.GetValue<int>());
                 }
                 primitive["indices"] = CopyAccessor(primitive["indices"]!.GetValue<int>());

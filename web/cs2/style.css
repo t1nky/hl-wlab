@@ -156,3 +156,7 @@ button[aria-pressed="true"] {
     padding: 12px;
   }
 }
+#surface-info {
+  overflow-wrap: anywhere;
+  font-family: monospace;
+}

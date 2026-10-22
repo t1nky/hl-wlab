@@ -6,6 +6,7 @@ import { dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MeshoptEncoder } from 'meshoptimizer/encoder';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
+import { packRenderGeometry } from './cs2-render-pack.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const output = fileURLToPath(new URL('../.local/cs2/de_inferno', import.meta.url));
@@ -32,6 +33,11 @@ async function compressRenderPackage() {
     const gltfPath = resolve(output, chunk);
     const folder = dirname(gltfPath);
     const gltf = JSON.parse(readFileSync(gltfPath, 'utf8'));
+    metadata.packedGeometry = packRenderGeometry(
+      gltf,
+      folder,
+      chunk.replace('render/', '').replace('.gltf', ''),
+    );
     const buffers = gltf.buffers.map((buffer) => {
       const path = resolve(folder, buffer.uri);
       if (!path.startsWith(output + sep)) throw Error('Render buffer escaped private output');

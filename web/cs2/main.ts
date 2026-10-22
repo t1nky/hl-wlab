@@ -1,13 +1,17 @@
 import {
   AmbientLight,
+  BatchedMesh,
   BufferAttribute,
   BufferGeometry,
   Color,
   DirectionalLight,
   DoubleSide,
+  Fog,
   Group,
+  type Intersection,
   Line,
   LineBasicMaterial,
+  Matrix4,
   Mesh,
   MeshLambertMaterial,
   PerspectiveCamera,
@@ -37,11 +41,15 @@ if (new URLSearchParams(location.search).get('view') === 'collision') {
 }
 const view = element('view');
 const renderer = new WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+const gl = renderer.getContext();
+const rendererInfo = gl.getExtension('WEBGL_debug_renderer_info');
+const gpu = rendererInfo ? String(gl.getParameter(rendererInfo.UNMASKED_RENDERER_WEBGL)) : '';
+const software = /swiftshader|llvmpipe|software/i.test(gpu);
 renderer.localClippingEnabled = true;
 view.append(renderer.domElement);
 const scene = new Scene();
 scene.background = new Color('#15232c');
+scene.fog = new Fog(scene.background, 30000, 40000);
 const camera = new PerspectiveCamera(55, 1, 1, 40000);
 camera.up.set(0, 0, 1);
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -52,7 +60,14 @@ scene.add(new AmbientLight(0xffffff, 1.6));
 const sun = new DirectionalLight(0xffffff, 2);
 sun.position.set(-1000, -1000, 4000);
 scene.add(sun);
-const ceiling = new Plane(new Vector3(0, 0, -1), 900);
+const ceiling = new Plane(new Vector3(0, 0, -1), 40000);
+let dirty = true;
+let renderMs = 0;
+let framesDrawn = 0;
+const invalidate = () => {
+  dirty = true;
+};
+controls.addEventListener('change', invalidate);
 const material = new MeshLambertMaterial({
   vertexColors: true,
   side: DoubleSide,
@@ -120,6 +135,7 @@ function showError(error: unknown) {
   console.error(error);
 }
 function updateDisplay() {
+  invalidate();
   const showTextures = element<HTMLSelectElement>('display').value === 'textures' && !!texturedMap;
   collisionGroup.visible = !showTextures;
   if (texturedMap) texturedMap.group.visible = showTextures;
@@ -138,6 +154,7 @@ async function ensureTextures() {
     texturedMap = await loadRenderMap({
       clippingPlanes: [ceiling],
       collisionFingerprint: meta.fingerprint,
+      batch: new URLSearchParams(location.search).get('batch') !== '0',
       onProgress: (message) => {
         element('render-status').textContent = message;
       },
@@ -160,6 +177,7 @@ const walking = createWalkControls({
     return { state: required(reply.state), ms: reply.ms, placement: reply.placement };
   },
   changed: (active, message) => {
+    applyRenderSettings(active);
     controls.enabled = !active;
     button('walk').setAttribute('aria-pressed', String(active));
     button('orbit').setAttribute('aria-pressed', String(!active));
@@ -186,6 +204,18 @@ const walking = createWalkControls({
   },
   error: showError,
 });
+function applyRenderSettings(walk = walking.active) {
+  const detail = element<HTMLSelectElement>('quality').value === 'detail';
+  renderer.setPixelRatio(Math.min(devicePixelRatio, detail ? 1.5 : software ? 0.75 : 1));
+  camera.far = walk ? (detail ? 6000 : 2000) : 40000;
+  camera.updateProjectionMatrix();
+  const fog = scene.fog as Fog;
+  fog.near = camera.far * 0.8;
+  fog.far = camera.far;
+  ceiling.constant = input('cut-enabled').checked && !walk ? Number(input('cut').value) : 40000;
+  invalidate();
+}
+applyRenderSettings(false);
 function coordinates(id: string): V3 {
   const values = input(id).value.trim().split(/[ ,]+/).map(Number);
   if (values.length !== 3 || !values.every(Number.isFinite))
@@ -261,6 +291,7 @@ function segment(a: Vector3, b: Vector3, color: number) {
   shotGroup.add(line);
 }
 function renderShot(shot: Shot) {
+  invalidate();
   currentShot = shot;
   disposeGroup(shotGroup);
   const source = new Vector3(...shot.source),
@@ -387,6 +418,7 @@ async function scan() {
   }
 }
 function clearScan() {
+  invalidate();
   if (scanPoints) {
     scene.remove(scanPoints);
     scanPoints.geometry.dispose();
@@ -420,9 +452,11 @@ button('cancel').onclick = () => {
 };
 button('clear').onclick = clearScan;
 input('cut').oninput = () => {
-  ceiling.constant = Number(input('cut').value);
+  applyRenderSettings();
   element('cut-value').textContent = input('cut').value;
 };
+input('cut-enabled').onchange = () => applyRenderSettings();
+element<HTMLSelectElement>('quality').onchange = () => applyRenderSettings();
 input('clip').onchange = () => {
   setRenderIndex();
   if (input('clip').checked) element<HTMLSelectElement>('display').value = 'collision';
@@ -457,6 +491,31 @@ renderer.domElement.onpointerup = async (e) => {
     ),
     camera,
   );
+  if (e.altKey && texturedMap?.group.visible) {
+    const hit = raycaster
+      .intersectObject(texturedMap.group, true)
+      .find((hit) => hit.point.z <= ceiling.constant) as
+      | (Intersection & { batchId?: number })
+      | undefined;
+    const info = element('surface-info');
+    info.hidden = false;
+    if (hit?.object instanceof Mesh) {
+      const source =
+        hit.object instanceof BatchedMesh && hit.batchId !== undefined
+          ? hit.object.userData.sources[hit.batchId]
+          : {
+              mesh: hit.object.name,
+              material: (hit.object.material as MeshLambertMaterial).userData.sourceMaterial,
+            };
+      info.textContent = `Surface at ${hit.point
+        .toArray()
+        .map((n) => n.toFixed(2))
+        .join(
+          ' ',
+        )} · ${source?.material ?? source?.mesh ?? 'unknown'} (geometry pick; alpha ignored)`;
+    } else info.textContent = 'No render surface under this point.';
+    return;
+  }
   try {
     if (pickMode) {
       const reply = await request({
@@ -494,14 +553,31 @@ new ResizeObserver(() => {
   renderer.setSize(width, height);
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
+  invalidate();
 }).observe(view);
 let previousFrame = performance.now();
+let lastStats = previousFrame;
+const previousView = new Matrix4();
 renderer.setAnimationLoop((time) => {
   const dt = Math.min(0.05, Math.max(0, (time - previousFrame) / 1000));
   previousFrame = time;
   if (walking.active) void walking.update(dt);
   else controls.update();
-  renderer.render(scene, camera);
+  camera.updateMatrixWorld();
+  if (!camera.matrixWorld.equals(previousView)) invalidate();
+  if (dirty) {
+    const start = performance.now();
+    renderer.render(scene, camera);
+    renderMs = performance.now() - start;
+    framesDrawn++;
+    previousView.copy(camera.matrixWorld);
+    dirty = false;
+  }
+  if (time - lastStats > 1000) {
+    element('performance').textContent =
+      `${software ? 'Software renderer · ' : ''}${renderer.info.render.calls} draws · ${(renderer.info.render.triangles / 1000000).toFixed(2)}M triangles · ${renderMs.toFixed(1)} ms submission${!dirty && !walking.active ? ' · redraw on change' : ''}`;
+    lastStats = time;
+  }
 });
 async function init() {
   const reply = await request({ op: 'load' });
@@ -536,7 +612,29 @@ async function init() {
       renderer: () => ({
         calls: renderer.info.render.calls,
         triangles: renderer.info.render.triangles,
+        renderMs,
+        framesDrawn,
+        pixelRatio: renderer.getPixelRatio(),
+        far: camera.far,
+        gpu,
       }),
+      benchmark: (frames = 10) => {
+        const samples = [];
+        for (let i = 0; i < Math.min(30, frames) + 2; i++) {
+          const start = performance.now();
+          renderer.render(scene, camera);
+          gl.finish();
+          if (i >= 2) samples.push(performance.now() - start);
+        }
+        return {
+          samples,
+          calls: renderer.info.render.calls,
+          triangles: renderer.info.render.triangles,
+          pixelRatio: renderer.getPixelRatio(),
+          far: camera.far,
+          gpu,
+        };
+      },
       ready: true,
     },
   });

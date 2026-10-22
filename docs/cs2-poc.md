@@ -26,6 +26,14 @@ the locally prepared render package; **Collision diagnostic** shows the physics
 surfaces. If render preparation is missing, collision view still works and the
 page shows the exact preparation command. `/?view=collision` skips texture loading.
 
+**Balanced** rendering caps pixel density (0.75 on detected software renderers,
+otherwise 1) and uses a 2,000-unit walking view distance with fog. **Full detail /
+longer view** permits 1.5 pixel density and a 6,000-unit walking view. Orbit keeps
+the full-map range. These settings affect appearance only, never trace distance.
+Cutaway is now opt-in and disabled while walking. In Orbit, **Alt+click** a suspect
+surface to show its Source coordinates and source material. This diagnostic picks
+render geometry, ignoring texture alpha; it does not change physics selection.
+
 Choose **Walk**, then click the map to capture the mouse. WASD moves, Space jumps,
 Ctrl/C holds crouch, E places a stationary target point at the current eye, and
 Escape pauses. Move away and click **Trace from view** to shoot from the new eye
@@ -93,32 +101,63 @@ uses diagnostic vertex colors and physical prop geometry. Textured view uses
 separate render meshes; neither tracing nor walking uses those render triangles.
 
 `tools/cs2-import/RenderExport.cs` exports the static world-node scene through VRF,
-retaining its actual UVs, model transforms and instancing. Base-color images use
-the first available color layer, capped at 512 pixels, with simple browser lighting.
-Source shader blending, normal/roughness maps, baked lighting and skyboxes are
-omitted. This is recognizable map appearance, not a reproduction of CS2 lighting.
+retaining its actual UVs, model transforms and instancing. Base-color images are
+capped at 512 pixels, with simple diffuse browser lighting. Decal alpha-test,
+transparency and modulation modes are preserved, instead of forcing overlay alpha
+to opaque. UV channel, scale, pivot, rotation and offset are retained. Vertex paint
+uses alpha as tint strength; environment color layers blend using TEXCOORD4 weights.
+Foliage COLOR channels encode wind rather than paint and are excluded. Other
+materials use vertex colors only when their shader enables that feature.
+Height-based blending, layer color-correction/tint masks, normal/roughness maps,
+baked lighting and skyboxes are omitted. This remains an approximation of Source
+shaders. A texture being present does not establish shader parity.
 Meshoptimizer 1.3.0 compresses geometry losslessly; every buffer view is decoded
 and compared byte-for-byte through Three's bundled decoder before publishing the
-local package. Browser decoding uses two workers. Shared geometry is retained.
-Indexed primitive bounds use only referenced vertices, so shared whole-model
-position buffers do not make every prop visible to the camera at once.
+local package. Browser decoding uses two workers. Preparation compacts each
+primitive to its referenced vertices and removes unused attributes, preserving
+triangle positions and UVs while allowing affordable GPU batching. Compatible opaque
+materials use Three's BatchedMesh with per-instance transforms and tint, conservative
+per-instance frustum culling and front-to-back sorting. Transparent and reflected
+instances remain separate. WEBGL_multi_draw is used where available; Three supplies
+the ordinary-draw fallback. Static transforms are frozen and unchanged views do not
+redraw. There is no portal/occlusion culling or distance-based mesh LOD yet.
 
-The actual render package has 8,419,800 triangles, 6,642 primitives and 243 unique
-base textures. 8,418,064 triangles (99.98%) have a base texture. Its compressed
-files occupy 268.0 MiB; decoded geometry is 353.3 MiB and estimated texture GPU
-storage is 288.3 MiB, in addition to collision and browser overhead. It is intended
-for a desktop local experiment. Final render preparation took 44.94 s plus 1.14 s
-for verified compression; a cached preparation checked render/collision data in
-5/104 ms. An earlier export was observed at 4.34 GiB peak process memory; the
-final export's peak was not sampled. These are local measurements, not guarantees.
-There is no portal/occlusion culling or render LOD yet: one tested first-person
-view still submitted about 4,300 draw calls and 5.5 million triangles. The initial
-orbit view fell from 5,852 calls/7.92 million triangles to 528/1.01 million after
-tightening bounds. Browser bounds preparation took 191 ms. The POC remains heavy;
-these counts do not establish a frame-rate guarantee.
-Sixteen sampled synchronous first-person frame callbacks took 13.1–15.9 ms in
-T3 preview; GPU completion was not measured, and hidden-tab scheduling prevents
-treating that sample as an FPS benchmark.
+The VRF glTF exporter emits all aggregate detail variants; preparation filters to
+the lowest present LOD mask bit, matching VRF's renderer, and excludes tools-only
+materials. Filtering happens after transforms have been consumed, preventing
+transform-index shifts when a fragment is omitted. These are render-only changes.
+
+After the rendering fixes, Inferno contains **8,323,289 render triangles** in
+6,559 primitives, with 255 unique color textures. Preparation excludes 51 redundant
+aggregate LOD meshes and tools-only primitives. The package is **290.7 MiB**;
+decoded geometry is 410.0 MiB, and estimated texture GPU storage is 304.3 MiB, in
+addition to collision, GPU batch textures and browser overhead. Extra paint/layer
+data makes this larger than the earlier first-layer-only package. Final preparation
+took 48.41 s including packing/compression; cached render/collision checks took
+5/102 ms. An earlier export peaked at 4.34 GiB; the final export peak was not sampled.
+
+At a fixed T-spawn eye `-1586.52 440.79 0.025` looking toward
+`-1520.06 430.891 2`, T3's SwiftShader preview at 1440×1000 measured:
+
+| Rendering | Draw calls | Triangles | Median render sample |
+| --- | ---: | ---: | ---: |
+| Before fixes, 1.5 pixel density | 4,257 | 5.47M | 15.45 ms |
+| Fixed, full detail, 1.5 pixel density | 675 | 5.40M | 2.80 ms |
+| Fixed, balanced, 0.75 pixel density | 399 | 2.35M | 1.90 ms |
+
+Samples explicitly finish WebGL work; baseline used six frames and final modes
+ten each after two warm-ups. The full-detail comparison includes material,
+batching and redundant-LOD fixes; balanced also changes distance/resolution.
+These are controlled render samples, not overall interactive FPS. Browser
+scheduling, compositor cost and initial shader/upload stalls remain outside this
+comparison. Unchanged Orbit views stopped redrawing; geometry was not simplified.
+Final loading batched 5,975 instances into 344 material batches in 176.5 ms.
+Current private review artifacts are `.local/cs2/qa/render-fixed-walk.png` and
+`render-performance.json`. Browser QA found no runtime errors or failed requests,
+and the surface inspector resolved a floor material at `-1545.89 493.62 -64.00`.
+The plaster ray still reports 19.2495 units and 42.9994 surrogate damage in both
+display modes. Specific remaining floating surfaces require their coordinates;
+the current shader subset and omitted entity models can still limit appearance.
 
 Prepared data is under ignored `.local/cs2/de_inferno/`: `map.json` plus a 68.8 MiB
 indexed binary `map.cs2map` (1,496,696 vertices; 2,709,353 triangles). Metadata
@@ -175,7 +214,7 @@ bun run cs2:smoke             # actual local map + warm trace timing report
 bun run check:repo            # audit staged index before committing
 ```
 
-Verified October 22, 2026: **96 tests passed, 9 existing private-fixture skips**.
+Verified October 22, 2026: **103 tests passed, 9 existing private-fixture skips**.
 Collision checks cover synthetic closed meshes/hulls, oblique thickness,
 start/target-inside, misses, collision filtering, transformed planes, triangle
 material/shape identity through BVH traversal, unclosed/conflicting meshes,
@@ -188,6 +227,10 @@ corners, steps, crouch clearance, jumps, ramps, placement and an installed-Infer
 240-tick path with player-volume checks every tick. Eight render checks cover
 coordinate restoration, resource disposal, missing/mismatched packages, compatible
 lossless compression and tight indexed-primitive bounds for frustum culling.
+Seven additional checks cover exact triangle/UV preservation during compaction,
+paint-alpha interpretation, UV transforms, nested batch transforms/tint/reflections,
+transparent exclusions/resource disposal, foliage wind data and actual Inferno
+decal/layer/LOD data.
 
 Measured on this machine, not general benchmark promises: importer reports
 2.55 s including hashing/serialization, fingerprint cache check 107 ms; uncached
@@ -200,7 +243,7 @@ Cancel was verified after one 25-cell row. T3 preview verified numeric tracing,
 floor picking, framing, scan/cancel and cached reload without console errors.
 The Inferno walking test measured mean 0.213 ms, p95 0.490 ms and maximum 2.037 ms
 per tick on this machine. Movement timing excludes drawing the render scene.
-T3 browser QA loaded all 243 textures without runtime errors, entered Walk,
+Initial textured browser QA loaded 243 textures without runtime errors, entered Walk,
 captured/released the mouse, placed a target with E, moved 42 units with the
 controller and traced back to the target (clear, 0.40 ms worker trace). Pending
 Walk startup followed immediately by Frame shot was also verified to stay in

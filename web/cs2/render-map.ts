@@ -1,11 +1,14 @@
 import {
+  BatchedMesh,
   Box3,
+  BufferAttribute,
   type BufferGeometry,
   Group,
   LoadingManager,
   type Material,
   Matrix4,
   Mesh,
+  type MeshStandardMaterial,
   type Plane,
   Sphere,
   Texture,
@@ -13,6 +16,8 @@ import {
 } from 'three';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { batchStaticMap } from './render-batches';
+import { type Cs2Material, diffuseMaterial } from './render-materials';
 
 let decoderWorkersStarted = false;
 
@@ -34,6 +39,7 @@ export interface RenderMetadata {
   totalBytes: number;
   warnings: string[];
   runtimeBounds?: { geometryCount: number; shrunkCount: number; ms: number };
+  runtimeBatches?: ReturnType<typeof batchStaticMap>;
 }
 
 export interface RenderMap {
@@ -82,19 +88,29 @@ export function disposeRenderGroup(group: Group): void {
   const geometries = new Set<Mesh['geometry']>();
   const materials = new Set<Material>();
   const textures = new Set<Texture>();
+  const batches = new Set<BatchedMesh>();
   group.traverse((object) => {
     if (!(object instanceof Mesh)) return;
     geometries.add(object.geometry);
+    if (object instanceof BatchedMesh) batches.add(object);
     for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
       materials.add(material);
       for (const value of Object.values(material))
         if (value instanceof Texture) textures.add(value);
+      for (const value of material.userData.cs2Textures ?? [])
+        if (value instanceof Texture) textures.add(value);
     }
   });
+  const images = new Set<ImageBitmap>();
   for (const texture of textures) {
     const image = texture.source.data;
-    if (typeof ImageBitmap !== 'undefined' && image instanceof ImageBitmap) image.close();
+    if (typeof ImageBitmap !== 'undefined' && image instanceof ImageBitmap) images.add(image);
     texture.dispose();
+  }
+  for (const image of images) image.close();
+  for (const batch of batches) {
+    geometries.delete(batch.geometry);
+    batch.dispose();
   }
   for (const material of materials) material.dispose();
   for (const geometry of geometries) geometry.dispose();
@@ -108,6 +124,7 @@ export async function loadRenderMap(
     onProgress?: (message: string) => void;
     signal?: AbortSignal;
     collisionFingerprint?: string;
+    batch?: boolean;
   } = {},
 ): Promise<RenderMap> {
   const { clippingPlanes = [], onProgress, signal } = options;
@@ -152,8 +169,12 @@ export async function loadRenderMap(
       signal?.throwIfAborted();
       // The POC has explicit simple lighting. Do not also apply exported Source light entities.
       const bounded = new Set<BufferGeometry>();
+      const meshes: Mesh[] = [];
       gltf.scene.traverse((object) => {
-        if (!(object instanceof Mesh)) return;
+        if (object instanceof Mesh) meshes.push(object);
+      });
+      const converted = new Map<Material, Material>();
+      for (const object of meshes) {
         if (!bounded.has(object.geometry)) {
           const started = performance.now();
           const oldRadius = object.geometry.boundingSphere?.radius ?? Infinity;
@@ -164,16 +185,42 @@ export async function loadRenderMap(
           bounds.ms += performance.now() - started;
           bounded.add(object.geometry);
         }
-        for (const material of Array.isArray(object.material)
-          ? object.material
-          : [object.material]) {
+        const materials: Material[] = [];
+        for (const source of Array.isArray(object.material) ? object.material : [object.material]) {
+          let material = converted.get(source);
+          const settings = source.userData.cs2 as Cs2Material | undefined;
+          if (!material) {
+            const textures = await Promise.all(
+              (settings?.layers ?? []).map(
+                (layer) => gltf.parser.getDependency('texture', layer.texture) as Promise<Texture>,
+              ),
+            );
+            material = diffuseMaterial(source as MeshStandardMaterial, settings, textures);
+            converted.set(source, material);
+            source.dispose();
+          }
           material.clippingPlanes = clippingPlanes;
           material.needsUpdate = true;
+          materials.push(material);
+          if (settings?.layers.length) {
+            const blend = object.geometry.getAttribute('_texcoord_4');
+            object.geometry.setAttribute(
+              'cs2Blend',
+              blend ??
+                new BufferAttribute(
+                  new Float32Array(object.geometry.getAttribute('position').count * 4),
+                  4,
+                ),
+            );
+            object.geometry.deleteAttribute('_texcoord_4');
+          }
         }
-      });
+        object.material = Array.isArray(object.material) ? materials : materials[0];
+      }
     }
     group.updateMatrixWorld(true);
     metadata.runtimeBounds = bounds;
+    if (options.batch !== false) metadata.runtimeBatches = batchStaticMap(group);
     onProgress?.(
       `${metadata.textureCount} base textures · ${(metadata.totalBytes / 1048576).toFixed(1)} MiB map package`,
     );

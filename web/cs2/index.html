@@ -29,6 +29,14 @@
           <option value="collision">Collision diagnostic</option>
         </select>
         <p id="render-status" role="status">Checking local textured map…</p>
+        <label for="quality">Rendering</label>
+        <select id="quality">
+          <option value="balanced">Balanced</option>
+          <option value="detail">Full detail / longer view</option>
+        </select>
+        <p id="performance"></p>
+        <p>Orbit: Alt+click a suspect surface for its coordinates and material.</p>
+        <p id="surface-info" hidden></p>
         <div class="buttons">
           <button id="source-pick" type="button" disabled>Pick source floor</button
           ><button id="target-pick" type="button" disabled>Pick target floor</button>
@@ -48,6 +56,7 @@
           ><button id="clear" type="button">Clear scan</button>
         </div>
         <p id="scan-status">64-unit grid · ±768 units · standability approximation</p>
+        <label><input id="cut-enabled" type="checkbox"> Enable cutaway in Orbit</label>
         <label for="cut">Cutaway ceiling · <span id="cut-value">900</span> units</label>
         <input id="cut" type="range" min="0" max="2500" value="900">
         <label><input id="clip" type="checkbox"> Show player-only collision (purple)</label>
