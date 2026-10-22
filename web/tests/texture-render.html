@@ -1,0 +1,190 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Map texture regression check</title>
+<style>
+body {
+  margin: 0;
+  background: #111a21;
+  color: #e4edf1;
+  font: 14px system-ui;
+}
+header {
+  padding: 16px;
+}
+button {
+  padding: 8px 14px;
+  margin-right: 8px;
+}
+#view {
+  display: block;
+  width: 100%;
+  height: 72vh;
+}
+#source {
+  image-rendering: pixelated;
+  height: 128px;
+  position: absolute;
+  right: 18px;
+  top: 120px;
+  border: 2px solid white;
+}
+#status {
+  white-space: pre-line;
+}
+strong {
+  color: #a4f2ce;
+}
+</style>
+<header>
+  <h2>Inferno texture verification</h2>
+  <p id="status">Loading...</p>
+  <button type="button" id="before">Previous mapping</button
+  ><button type="button" id="after">Correct mapping</button
+  ><span>Inset: unmodified texture pixels from the BSP</span>
+</header>
+<canvas id="view"></canvas><canvas id="source"></canvas>
+<script type="module">
+import * as T from 'three';
+import { readBSP } from '../src/engine/bsp.ts';
+import { buildMapMeshes } from '../src/render/map.ts';
+
+const status = document.querySelector('#status'),
+  canvas = document.querySelector('#view');
+const renderer = new T.WebGLRenderer({ canvas, antialias: true });
+renderer.outputColorSpace = T.SRGBColorSpace;
+renderer.setClearColor(0x15212a);
+const scene = new T.Scene(),
+  camera = new T.PerspectiveCamera(65, 1, 1, 10000);
+camera.up.set(0, 0, 1);
+const width = () => {
+  renderer.setSize(innerWidth, innerHeight * 0.72, false);
+  camera.aspect = canvas.clientWidth / canvas.clientHeight;
+  camera.updateProjectionMatrix();
+};
+function gpuCheck(rotated) {
+  const data = new Uint8Array(16 * 16 * 4),
+    colors = [
+      [255, 0, 0],
+      [0, 255, 0],
+      [0, 0, 255],
+      [255, 255, 0],
+    ];
+  for (let y = 0; y < 16; y++)
+    for (let x = 0; x < 16; x++)
+      data.set([...colors[(y >= 8 ? 2 : 0) + (x >= 8 ? 1 : 0)], 255], (y * 16 + x) * 4);
+  const points = [
+    [0, 0, 0],
+    [0, 1, 0],
+    [1, 1, 0],
+    [1, 0, 0],
+  ];
+  const bsp = {
+    textures: [{ name: 'quadrants', width: 16, height: 16, rgba: data }],
+    brushes: [{ origin: [0, 0, 0], angles: [0, 0, 0] }],
+    faces: [
+      {
+        texture: 0,
+        brush: 0,
+        normal: [0, 0, 1],
+        points,
+        uv: points.map(([x, y]) =>
+          rotated ? [(1 - y) * 16, (1 - x) * 16] : [x * 16, (1 - y) * 16],
+        ),
+      },
+    ],
+  };
+  const mesh = buildMapMeshes(bsp)[0];
+  mesh.material.vertexColors = false;
+  const test = new T.Scene();
+  test.add(mesh);
+  const eye = new T.OrthographicCamera(-0.5, 0.5, 0.5, -0.5, 0.01, 10);
+  eye.position.set(0.5, 0.5, 1);
+  eye.lookAt(0.5, 0.5, 0);
+  const target = new T.WebGLRenderTarget(16, 16),
+    pixels = new Uint8Array(16 * 16 * 4);
+  renderer.setRenderTarget(target);
+  renderer.render(test, eye);
+  renderer.readRenderTargetPixels(target, 0, 0, 16, 16, pixels);
+  renderer.setRenderTarget(null);
+  const got = [
+    [4, 12],
+    [12, 12],
+    [4, 4],
+    [12, 4],
+  ].map(([x, y]) => Array.from(pixels.subarray((y * 16 + x) * 4, (y * 16 + x) * 4 + 3)));
+  const expected = (rotated ? [2, 0, 3, 1] : [0, 1, 2, 3]).map((i) => colors[i]);
+  if (JSON.stringify(got) !== JSON.stringify(expected))
+    throw Error(`GPU quadrant orientation: ${JSON.stringify({ rotated, got, expected })}`);
+  target.dispose();
+  mesh.geometry.dispose();
+  mesh.material.map.dispose();
+  mesh.material.dispose();
+}
+try {
+  gpuCheck(false);
+  gpuCheck(true);
+  const response = await fetch('../assets/de_inferno.bsp');
+  if (!response.ok) throw Error('Import the local Inferno BSP first');
+  const bsp = readBSP(await response.arrayBuffer()),
+    meshes = buildMapMeshes(bsp, {
+      anisotropy: Math.min(8, renderer.capabilities.getMaxAnisotropy()),
+    });
+  scene.add(...meshes);
+  const face = bsp.faces.find(
+    (f) => bsp.textures[f.texture].name === 'cuwndh' && Math.abs(f.normal[2]) < 0.01,
+  );
+  const center = [0, 1, 2].map((j) =>
+    face.points.reduce((s, p) => s + p[j] / face.points.length, 0),
+  );
+  const span = Math.max(
+    ...[0, 1, 2].map(
+      (j) => Math.max(...face.points.map((p) => p[j])) - Math.min(...face.points.map((p) => p[j])),
+    ),
+  );
+  camera.position.set(
+    ...center.map((v, j) => v + face.normal[j] * span * 1.2 + (j === 2 ? span * 0.05 : 0)),
+  );
+  camera.lookAt(...center);
+  const source = bsp.textures[face.texture],
+    preview = document.querySelector('#source');
+  preview.width = source.width;
+  preview.height = source.height;
+  preview
+    .getContext('2d')
+    .putImageData(
+      new ImageData(
+        new Uint8ClampedArray(source.rgba.buffer, source.rgba.byteOffset, source.rgba.byteLength),
+        source.width,
+        source.height,
+      ),
+      0,
+      0,
+    );
+  const original = meshes.map((m) => m.geometry.getAttribute('uv').array.slice());
+  function view(before) {
+    for (let i = 0; i < meshes.length; i++) {
+      const mesh = meshes[i],
+        uv = mesh.geometry.getAttribute('uv');
+      uv.array.set(original[i]);
+      if (before) for (let j = 1; j < uv.array.length; j += 2) uv.array[j] *= -1;
+      uv.needsUpdate = true;
+      const map = mesh.material.map;
+      if (map) {
+        map.magFilter = before ? T.NearestFilter : T.LinearFilter;
+        map.anisotropy = before ? 1 : Math.min(8, renderer.capabilities.getMaxAnisotropy());
+        map.needsUpdate = true;
+      }
+    }
+    width();
+    renderer.render(scene, camera);
+    status.textContent = `GPU orientation tests: 2 passed. All ${bsp.textures.length} embedded textures decoded.\n${before ? 'PREVIOUS: flipped vertical texture axis' : 'CORRECTED: native texture axes'} | face ${face.index} | ${source.name} | decoded source inset`;
+  }
+  document.querySelector('#before').onclick = () => view(true);
+  document.querySelector('#after').onclick = () => view(false);
+  window.onresize = () => view(false);
+  view(false);
+} catch (e) {
+  status.textContent = `FAILED: ${e.message}`;
+  console.error(e);
+}
+</script>

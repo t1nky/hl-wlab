@@ -1,0 +1,27 @@
+{
+  "sourceCommit": "9cd2b86",
+  "mapSHA256": "d5dcf0aa4d36a0d446ed22e45b841ebc0b9e9d6c8d73b0151ba0d75afd908d5b",
+  "modelSHA256": "939d4c34cb8b7339afc286feddd45c5d88f103e3a9ae69066ab372da276f3b0e",
+  "materialsSHA256": "0d35d708cb3737fc99caf50e41ae32680e197218d2a51488489ecb7561b3ab6c",
+  "wasmSHA256": "0e57327f96c8ee03bc1cb17de882be4b1b3cc93ff1fa6ddc561a1eac7cf6b3ae",
+  "target": [
+    1159.721435546875,
+    288.6636047363281,
+    260.0310974121094
+  ],
+  "yaw": 169.5330047607422,
+  "sequence": 1,
+  "options": {
+    "yawBlend": 128,
+    "pitchBlend": 127,
+    "gait": 1
+  },
+  "expansion": 0.5,
+  "spacing": 12,
+  "radius": 8192,
+  "candidates": 180498,
+  "postures": 360996,
+  "valid": 108986,
+  "jobsSHA256": "74f4bb22a4edd43337131a2d90edbdc66b49c9ba3e6450d1fb4deaca31cf11a9",
+  "resultsSHA256": "e94d78361deea3082f34330c1cb5911af72d6e5748fa948063b595e90681fb83"
+}

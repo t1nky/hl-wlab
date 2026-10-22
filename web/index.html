@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="theme-color" content="#111a21">
+    <title>Wallbang Lab</title>
+    <link rel="icon" href="data:,">
+    <link rel="manifest" href="manifest.json">
+  </head>
+  <body>
+    <header>
+      <strong>WALLBANG LAB</strong
+      ><span
+        class="dim"
+        title="Static scene, one stationary target pose, three aim points (chest, head, pelvis), One bullet or pellet, no spread or recoil. Movement, animation and fired-weapon damage parity with the game are not certified. Runs entirely in this browser, with no game connection."
+        >Experimental · zero-spread · not certified game parity ·
+        <a href="%BASE_URL%help.md" target="_blank">Details</a></span
+      >
+    </header>
+    <main>
+      <aside>
+        <section>
+          <h2>1 · Map</h2>
+          <button type="button" id="gameFolder" class="primary">Choose Half-Life folder</button>
+          <input id="gameDirectory" type="file" webkitdirectory multiple hidden>
+          <p id="libraryStatus" class="dim" role="status">
+            Select Half-Life or cstrike. Files stay on this device.
+          </p>
+          <label
+            >Imported maps<select id="libraryMap" disabled>
+              <option value="">No imported maps</option>
+            </select></label
+          >
+          <div class="buttons">
+            <button type="button" id="libraryLoad" disabled>Load map</button>
+            <button type="button" id="libraryCancel" hidden>Cancel import</button>
+          </div>
+          <progress id="libraryProgress" value="0" max="1" hidden></progress>
+          <details id="libraryDetails" hidden>
+            <summary>Import notices</summary>
+            <p id="libraryNotices" class="dim"></p>
+          </details>
+          <p id="assetsStatus" class="dim">Choose an imported map to begin.</p>
+          <details open>
+            <summary>Bookmarks</summary>
+            <label
+              >Name<input
+                id="bookmarkName"
+                type="text"
+                maxlength="80"
+                placeholder="e.g. Banana corner"
+              ></label
+            >
+            <button type="button" id="bookmarkSave" disabled>Save position</button>
+            <label class="bookmark-picker"
+              >Saved positions<select id="bookmarkList" disabled>
+                <option value="">No bookmarks yet</option>
+              </select></label
+            >
+            <div class="buttons">
+              <button type="button" id="bookmarkLoad" disabled>Load</button>
+              <button type="button" id="bookmarkRename" disabled>Rename</button>
+              <button type="button" id="bookmarkDelete" disabled>Delete</button>
+            </div>
+            <p id="bookmarkStatus" class="dim" role="status">Saved only in this browser.</p>
+          </details>
+          <details>
+            <summary>Import / export files</summary>
+            <label>BSP map<input id="mapFile" type="file" accept=".bsp"></label
+            ><label>Player model<input id="modelFile" type="file" accept=".mdl"></label
+            ><label>materials.txt<input id="materialFile" type="file" accept=".txt"></label
+            ><label
+              >Skybox (six TGAs)<input id="skyFiles" type="file" accept=".tga" multiple></label
+            >
+            <p id="skyStatus" class="dim" role="status"></p>
+            <label>Scene (optional)<input id="snapshotFile" type="file" accept=".txt,.json"></label>
+            <div class="buttons">
+              <button type="button" id="restore">Restore last assets</button
+              ><button type="button" id="export">Export scene</button>
+            </div>
+          </details>
+        </section>
+        <section>
+          <h2>2 · Target</h2>
+          <button type="button" id="place" class="primary" disabled>Walk to place target</button>
+          <p id="placementStatus" class="dim" role="status">
+            Walk there, look where the target should face, press <strong>E</strong>.
+          </p>
+          <div class="two">
+            <label
+              >Target stance<select id="targetPosture">
+                <option value="0">Standing</option>
+                <option value="1">Crouching</option>
+              </select></label
+            ><label
+              >Armor<select id="armor">
+                <option value="0">None</option>
+                <option value="1">Vest</option>
+                <option value="2" selected>Vest + helmet</option>
+              </select></label
+            >
+          </div>
+          <label class="inline"
+            >Armor points<input id="armorValue" type="number" min="0" max="100" value="100"></label
+          >
+          <details>
+            <summary>Advanced pose</summary>
+            <div class="three">
+              <label>X<input id="tx" type="number" value="1159.721435546" step="1"></label
+              ><label>Y<input id="ty" type="number" value="288.663604736" step="1"></label
+              ><label>Z origin<input id="tz" type="number" value="260.031097412" step="1"></label>
+            </div>
+            <div class="two">
+              <label>Yaw °<input id="yaw" type="number" value="169.533004760" step="1"></label
+              ><label>Pitch °<input id="pitch" type="number" value="0" min="-89" max="89"></label>
+            </div>
+            <label
+              >Sequence (frame 0)<select id="sequence">
+                <option value="1">Standing idle</option>
+              </select></label
+            >
+            <div class="two">
+              <label
+                >Yaw blend<input
+                  id="yawBlend"
+                  type="number"
+                  value="128"
+                  min="0"
+                  max="255"
+                  step="0.5"
+                ></label
+              ><label
+                >Pitch blend<input
+                  id="pitchBlend"
+                  type="number"
+                  value="127"
+                  min="0"
+                  max="255"
+                ></label
+              >
+            </div>
+            <div class="two">
+              <label>Gait sequence<input id="gait" type="number" value="1" min="0" max="110"></label
+              ><label
+                >Trace expansion<input
+                  id="expansion"
+                  type="number"
+                  value="0.5"
+                  min="0"
+                  max="4"
+                  step="0.1"
+                ></label
+              >
+            </div>
+          </details>
+        </section>
+        <section>
+          <h2>3 · Scan</h2>
+          <label
+            >Weapon<select id="weapon">
+              <option value="awp" selected>AWP</option>
+            </select></label
+          >
+          <p
+            id="weaponNote"
+            class="dim"
+            title="Damage is for one aimed pellet. Shotgun spread and combined pellet damage are not simulated."
+            hidden
+          ></p>
+          <div class="three">
+            <label
+              title="Grid spacing in units. Halving it (24 → 12 → 6 → 3) reuses every cached result; armor changes need no retrace."
+              >Spacing<input
+                id="spacing"
+                type="number"
+                min="3"
+                max="128"
+                value="12"
+                list="spacings"
+              ></label
+            ><label
+              title="Horizontal search radius. Defaults to the selected weapon's maximum projectile range."
+              >Radius<input id="radius" type="number" min="64" max="8192" value="8192"></label
+            ><label title="Parallel WebAssembly trace workers"
+              >Workers<select id="workers">
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="4" selected>4</option>
+              </select></label
+            >
+          </div>
+          <datalist id="spacings">
+            <option value="3"></option>
+            <option value="6"></option>
+            <option value="12"></option>
+            <option value="24"></option>
+            <option value="48"></option>
+            <option value="96"></option>
+          </datalist>
+          <div class="buttons">
+            <button type="button" id="scan" class="primary" disabled>Scan</button
+            ><button type="button" id="cancel" disabled>Cancel</button>
+          </div>
+          <progress id="progress" value="0" max="1"></progress>
+          <div id="progressText" role="status" class="dim">Load a map to begin.</div>
+        </section>
+      </aside>
+      <article>
+        <div class="viewbar">
+          <fieldset class="buttons" aria-label="Camera mode">
+            <button type="button" id="orbit" class="active" aria-pressed="true">Orbit</button
+            ><button type="button" id="walk" aria-pressed="false">Walk</button
+            ><button type="button" id="fly" aria-pressed="false">Fly</button>
+          </fieldset>
+          <fieldset class="buttons" aria-label="Frame view">
+            <button type="button" id="focus" title="Frame the target">Target</button
+            ><button type="button" id="overview" title="Frame the whole map">Map</button>
+          </fieldset>
+          <label
+            class="inline"
+            title="Lower to hide ceilings and upper floors. Fully right turns cutaway off."
+            >Cutaway<input id="cut" type="range" min="-512" max="1800" value="600"></label
+          ><label class="inline" title="Show points through walls"
+            ><input id="xray" type="checkbox" checked>X-ray</label
+          ><label class="inline"><input id="textures" type="checkbox" checked>Textures</label
+          ><label class="inline"><input id="sky" type="checkbox" checked disabled>Sky</label>
+        </div>
+        <div id="viewport">
+          <canvas id="canvas" tabindex="0" aria-label="Interactive 3D map"></canvas>
+          <div id="crosshair" hidden>+</div>
+          <div id="modeHint">Load a map in step 1 to start</div>
+        </div>
+        <div id="filters">
+          <fieldset class="chips" aria-label="Hit type">
+            <label class="chip"
+              ><input id="showWallbang" type="checkbox" checked>
+              <i class="swatch" style="--c:var(--wallbang)"></i>Wallbang<b id="countWallbang"
+                >0</b
+              ></label
+            ><label class="chip"
+              ><input id="showDirect" type="checkbox" checked>
+              <i class="swatch" style="--c:var(--direct)"></i>Direct<b id="countDirect">0</b></label
+            ><label class="chip" title="Valid shooter positions where no anchor is hit"
+              ><input id="showMiss" type="checkbox"><i class="swatch" style="--c:var(--miss)"></i>No
+              hit<b id="countMiss">0</b></label
+            >
+          </fieldset>
+          <fieldset class="chips" aria-label="Shooter stance">
+            <span class="dim">Shooter</span
+            ><label class="chip"
+              ><input id="showStanding" type="checkbox" checked><i class="swatch"></i>Standing<b
+                id="countStanding"
+                >0</b
+              ></label
+            ><label class="chip"
+              ><input id="showCrouching" type="checkbox"><i class="swatch ring"></i>Crouching<b
+                id="countCrouching"
+                >0</b
+              ></label
+            >
+          </fieldset>
+          <label
+            class="inline"
+            title="Hide hits below this damage. 100 HP kills a full-health target."
+            >Min damage<input id="minDamage" type="range" min="1" max="100" value="1">
+            <output id="minDamageValue" for="minDamage">1 HP</output></label
+          >
+          <p id="filterInfo" role="status">
+            <span id="filterText"></span
+            ><button type="button" id="showWeak" hidden>Show them</button>
+          </p>
+        </div>
+        <div id="detail">
+          <p>
+            <strong id="detailTitle"></strong
+            ><span id="detailText" class="dim">Click a point to see its damage and aim.</span>
+          </p>
+          <button type="button" id="standHere" hidden>Stand here</button>
+        </div>
+        <div id="error" role="alert" hidden></div>
+      </article>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

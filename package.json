@@ -1,0 +1,36 @@
+{
+  "name": "hl-wlab",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.4.3",
+  "engines": {
+    "node": ">=22.18.0",
+    "bun": ">=1.4.3"
+  },
+  "scripts": {
+    "dev": "bun --bun vite --config web/vite.config.ts",
+    "build": "bun run typecheck && bun --bun vite build --config web/vite.config.ts",
+    "start": "bun tools/serve-web.mjs",
+    "preview": "bun tools/serve-web.mjs",
+    "typecheck": "tsc --noEmit -p web/tsconfig.json",
+    "lint": "biome check --error-on-warnings .",
+    "format": "biome check --write .",
+    "test": "bun --bun vitest run --config web/vite.config.ts",
+    "test:watch": "bun --bun vitest --config web/vite.config.ts",
+    "check": "bun run lint && bun run test && bun run build",
+    "check:repo": "bun tools/check-repo.mjs",
+    "check:pages": "bun tools/check-pages.mjs"
+  },
+  "dependencies": {
+    "three": "0.170.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.2",
+    "@types/node": "^24.0.0",
+    "@types/three": "0.170.0",
+    "fake-indexeddb": "6.2.6",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  }
+}

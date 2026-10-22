@@ -1,0 +1,181 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Skybox WebGL check</title>
+<style>
+body {
+  margin: 0;
+  background: #111a21;
+  color: #e4edf1;
+  font: 14px system-ui;
+}
+header {
+  padding: 16px;
+}
+button {
+  padding: 8px 14px;
+  margin-right: 8px;
+}
+canvas {
+  display: block;
+  width: 100%;
+  height: 80vh;
+}
+#status {
+  white-space: pre-line;
+}
+</style>
+<header>
+  <strong>Inferno skybox</strong>
+  <p id="status">Loading…</p>
+  <button type="button" id="street">Street</button><button type="button" id="up">Look up</button
+  ><button type="button" id="off">Hide sky</button><button type="button" id="on">Show sky</button>
+</header>
+<canvas></canvas>
+<script type="module">
+import * as T from 'three';
+import { readBSP } from '../src/engine/bsp.ts';
+import { buildMapMeshes } from '../src/render/map.ts';
+import { buildSkybox, fetchSkybox, SKY_SIDES, skyName } from '../src/render/skybox.ts';
+
+const status = document.querySelector('#status'),
+  canvas = document.querySelector('canvas'),
+  renderer = new T.WebGLRenderer({ canvas, antialias: true });
+renderer.outputColorSpace = T.SRGBColorSpace;
+renderer.setClearColor(0x15212a);
+const scene = new T.Scene(),
+  camera = new T.PerspectiveCamera(70, 1, 1, 40000);
+camera.up.set(0, 0, 1);
+try {
+  // Asymmetric labeled colors catch face swaps, horizontal mirrors and all
+  // rotations, including the ceiling/floor. Expectations use world directions.
+  const colors = SKY_SIDES.map((_, i) => [
+    [32 + i * 32, 32, 32],
+    [32 + i * 32, 224, 32],
+    [32 + i * 32, 32, 224],
+    [32 + i * 32, 224, 224],
+  ]);
+  const faces = Object.fromEntries(
+    SKY_SIDES.map((side, i) => {
+      const data = new Uint8Array(18 + 16 * 16 * 3);
+      data[2] = 2;
+      data[12] = data[14] = 16;
+      data[16] = 24;
+      data[17] = 32;
+      for (let y = 0; y < 16; y++)
+        for (let x = 0; x < 16; x++)
+          data.set(
+            colors[i][(y >= 8 ? 2 : 0) + (x >= 8 ? 1 : 0)].toReversed(),
+            18 + (y * 16 + x) * 3,
+          );
+      return [side, data.buffer];
+    }),
+  );
+  const test = new T.Scene();
+  test.background = buildSkybox({ name: 'quadrants', faces });
+  const target = new T.WebGLRenderTarget(1, 1);
+  target.texture.colorSpace = T.SRGBColorSpace;
+  const eye = new T.PerspectiveCamera(1, 1, 0.1, 10),
+    pixel = new Uint8Array(4);
+  let checks = 0;
+  // Each side's world normal, image-right vector, and image-down vector.
+  const axes = [
+    [
+      [1, 0, 0],
+      [0, -1, 0],
+      [0, 0, -1],
+    ],
+    [
+      [0, 1, 0],
+      [1, 0, 0],
+      [0, 0, -1],
+    ],
+    [
+      [-1, 0, 0],
+      [0, 1, 0],
+      [0, 0, -1],
+    ],
+    [
+      [0, -1, 0],
+      [-1, 0, 0],
+      [0, 0, -1],
+    ],
+    [
+      [0, 0, 1],
+      [0, -1, 0],
+      [1, 0, 0],
+    ],
+    [
+      [0, 0, -1],
+      [0, -1, 0],
+      [-1, 0, 0],
+    ],
+  ];
+  for (let i = 0; i < 6; i++)
+    for (let q = 0; q < 4; q++)
+      for (const position of [
+        [0, 0, 0],
+        [734, -210, 143],
+      ]) {
+        const [n, right, down] = axes[i],
+          direction = n.map(
+            (v, j) => v + right[j] * (q & 1 ? 0.5 : -0.5) + down[j] * (q & 2 ? 0.5 : -0.5),
+          );
+        eye.position.fromArray(position);
+        eye.up.set(0, 0, 1);
+        eye.lookAt(...direction.map((v, j) => v + position[j]));
+        renderer.setRenderTarget(target);
+        renderer.render(test, eye);
+        renderer.readRenderTargetPixels(target, 0, 0, 1, 1, pixel);
+        if (colors[i][q].some((v, j) => Math.abs(v - pixel[j]) > 1))
+          throw Error(
+            `Cube face/orientation ${SKY_SIDES[i]} quadrant ${q}: ${[...pixel]} expected ${colors[i][q]}`,
+          );
+        checks++;
+      }
+  renderer.setRenderTarget(null);
+  target.dispose();
+  test.background.dispose();
+  const response = await fetch('../assets/de_inferno.bsp');
+  if (!response.ok) throw Error('Import Inferno first');
+  const bsp = readBSP(await response.arrayBuffer()),
+    name = skyName(bsp),
+    data = await fetchSkybox(name, (url) => fetch(`../${url}`));
+  // The loader's ordinary app-relative URLs are resolved against the site root.
+  const sky = data ? buildSkybox(data) : null;
+  if (!sky) throw Error('Import the six sky TGAs first');
+  scene.background = sky;
+  scene.add(...buildMapMeshes(bsp, { anisotropy: 8 }));
+  function draw() {
+    renderer.setSize(innerWidth, innerHeight * 0.8, false);
+    camera.aspect = canvas.clientWidth / canvas.clientHeight;
+    camera.updateProjectionMatrix();
+    renderer.render(scene, camera);
+    status.textContent = `GPU checks: ${checks} passed · six faces, all quadrants, no camera-translation parallax\nSky: ${name} · 256 × 256 per face · one background draw · ${scene.background ? 'visible' : 'hidden'}`;
+  }
+  function street() {
+    camera.position.set(2400, 2208, 156);
+    camera.lookAt(2100, 2208, 220);
+    draw();
+  }
+  document.querySelector('#street').onclick = street;
+  document.querySelector('#up').onclick = () => {
+    camera.position.set(2400, 2208, 156);
+    camera.lookAt(2250, 2208, 480);
+    draw();
+  };
+  document.querySelector('#off').onclick = () => {
+    scene.background = null;
+    draw();
+  };
+  document.querySelector('#on').onclick = () => {
+    scene.background = sky;
+    draw();
+  };
+  window.onresize = draw;
+  street();
+} catch (e) {
+  renderer.setRenderTarget(null);
+  status.textContent = `FAILED: ${e.message}`;
+  console.error(e);
+}
+</script>

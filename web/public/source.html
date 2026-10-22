@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Source & licenses · Wallbang Lab</title>
+    <style>
+    :root {
+      color-scheme: dark;
+      font:
+        15px / 1.65 system-ui,
+        sans-serif;
+      background: #111216;
+      color: #e7e7ed;
+    }
+    body {
+      max-width: 680px;
+      margin: 64px auto;
+      padding: 0 24px;
+    }
+    h1 {
+      font-size: 24px;
+      font-weight: 550;
+    }
+    a {
+      color: #b6afff;
+    }
+    p,
+    li {
+      color: #b1b1bd;
+    }
+    code {
+      font-size: 13px;
+    }
+    </style>
+  </head>
+  <body>
+    <a href="./">← Wallbang Lab</a>
+    <h1>Source & licenses</h1>
+    <p>
+      The browser application and trace core are distributed under
+      <a href="licenses/GPL-3.0.txt">GPL-3.0-or-later</a>, without warranty. Copyright remains with
+      the respective contributors.
+    </p>
+    <p>
+      <a href="source.tar.gz" download>Download the matching source</a>
+      for this deployment, including build scripts and the bundled Three.js source. The
+      <a href="revision.txt">revision</a>
+      identifies the exact Git commit. The archive's NOTICE.md preserves upstream attribution and
+      the content boundaries.
+    </p>
+    <p>
+      Install Bun 1.4.3, run <code>bun install --frozen-lockfile</code>, then
+      <code>bun run build</code>. To rebuild the trace core, install Zig 0.15.2 and run
+      <code>sh tools/build-web.sh</code>
+      or
+      <code>tools/build-web.ps1</code>. Full instructions are in docs/DEVELOPMENT.md.
+    </p>
+    <ul>
+      <li><a href="licenses/ReHLDS-LICENSE.txt">ReHLDS notice</a></li>
+      <li><a href="licenses/ReGameDLL-LICENSE.txt">ReGameDLL notice</a></li>
+      <li><a href="licenses/THREE-LICENSE.txt">Three.js and OrbitControls notice</a></li>
+      <li><a href="https://github.com/t1nky/hl-wlab">Source repository and attribution</a></li>
+    </ul>
+    <p>
+      Independent project, unaffiliated with Valve. Counter-Strike, Half-Life and Steam are Valve
+      trademarks. No game content is supplied. Import your own lawfully obtained files; they stay in
+      your browser.
+    </p>
+  </body>
+</html>

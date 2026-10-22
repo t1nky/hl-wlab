@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Controls integration check</title>
+    <style>
+    body {
+      margin: 0;
+      background: #111216;
+      color: #eee;
+      font: 13px / 1.5 system-ui;
+    }
+    header {
+      padding: 12px 16px;
+    }
+    button {
+      padding: 6px 12px;
+    }
+    pre {
+      white-space: pre-wrap;
+      margin: 8px 0 0;
+    }
+    iframe {
+      width: 100%;
+      height: 820px;
+      border: 0;
+      display: block;
+    }
+    </style>
+  </head>
+  <body>
+    <header>
+      <button type="button" id="run" disabled>Run live controls checks</button>
+      <pre
+        id="results"
+        role="status"
+      >Loading app. Import a map in the embedded app before running the checks.</pre>
+    </header>
+    <iframe id="app" title="Live controls test app" src="../index.html"></iframe>
+    <script type="module">
+    // A real, visible browser is needed: offscreen automation can suppress RAF.
+    // Manual integration entry; never used by the normal application flow.
+    const frame = document.getElementById('app');
+    const output = document.getElementById('results');
+    const run = document.getElementById('run');
+    const ready = () => {
+      run.disabled = !frame.contentWindow.lab;
+      if (!run.disabled)
+        output.textContent = 'Ready. Checks briefly capture the mouse, then release it.';
+    };
+    frame.addEventListener('load', ready);
+    ready();
+    run.onclick = async () => {
+      run.disabled = true;
+      const app = frame.contentWindow;
+      const $ = (id) => app.document.getElementById(id);
+      const checks = [];
+      const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const rendered = async () => {
+        const tick = new Promise((resolve) =>
+          app.requestAnimationFrame(() => app.requestAnimationFrame(() => resolve(true))),
+        );
+        if (!(await Promise.race([tick, delay(3000).then(() => false)])))
+          throw Error(
+            'Browser suspended animation frames. Keep this test in a visible foreground window.',
+          );
+      };
+      const ok = (condition, message) => {
+        if (!condition)
+          throw Error(
+            `${message.replace('PASS · ', '')} [mode=${app.labDebug.mode}, active=${app.document.documentElement.dataset.navigating}, focus=${app.document.activeElement?.id}, hidden=${app.document.hidden}, frames=${app.labDebug.frame}]`,
+          );
+        checks.push(message);
+        output.textContent = checks.join('\n');
+      };
+      const key = (code, value, target = $('canvas'), type = 'keydown') =>
+        target.dispatchEvent(new app.KeyboardEvent(type, { code, key: value, bubbles: true }));
+      const engage = () => {
+        $('canvas').focus();
+        $('canvas').dispatchEvent(
+          new app.PointerEvent('pointerdown', { button: 0, pointerId: 1, bubbles: true }),
+        );
+        $('canvas').dispatchEvent(
+          new app.PointerEvent('pointerup', { button: 0, pointerId: 1, bubbles: true }),
+        );
+      };
+      try {
+        output.textContent = 'Restoring imported map…';
+        await app.lab.whenStarted();
+        if (!app.labReady) throw Error('Import a map in the embedded app, then run the checks.');
+        app.lab.setMode('fly');
+        engage();
+        await rendered();
+        ok(
+          app.document.documentElement.dataset.navigating === 'true',
+          'PASS · canvas engages navigation',
+        );
+        const initial = app.lab.camera.position.toArray();
+        key('KeyW', 'w');
+        await rendered();
+        ok(
+          app.lab.camera.position.toArray().some((value, i) => value !== initial[i]),
+          'PASS · held W moves the camera',
+        );
+        key('Escape', 'Escape');
+        await rendered();
+        const paused = app.lab.camera.position.toArray();
+        const idleFrame = app.labDebug.frame;
+        await delay(180);
+        ok(
+          app.lab.camera.position.toArray().every((value, i) => value === paused[i]),
+          'PASS · Escape releases movement',
+        );
+        ok(app.labDebug.frame === idleFrame, 'PASS · paused camera has no render loop');
+        app.lab.setMode('walk');
+        engage();
+        await rendered();
+        const position = app.lab.walker.p.slice();
+        key('KeyE', 'e');
+        ok(
+          ['tx', 'ty', 'tz'].every((id, i) => Math.abs(Number($(id).value) - position[i]) < 0.001),
+          'PASS · E places at exact walking body origin',
+        );
+        key('Escape', 'Escape');
+        const target = ['tx', 'ty', 'tz'].map((id) => $(id).value);
+        $('weapon').focus();
+        key('KeyE', 'e', $('weapon'));
+        ok(
+          ['tx', 'ty', 'tz'].every((id, i) => $(id).value === target[i]),
+          'PASS · form keys cannot place a target',
+        );
+        const stationary = app.lab.walker.p.slice();
+        $('scan').focus();
+        key('KeyW', 'w', $('scan'));
+        await delay(80);
+        ok(
+          app.lab.walker.p.every((value, i) => value === stationary[i]),
+          'PASS · focused button cannot move player',
+        );
+        app.lab.setMode('orbit');
+        $('cut').value = '500';
+        $('cut').dispatchEvent(new app.Event('input'));
+        $('focus').click();
+        ok($('cut').value === '500', 'PASS · target framing preserves cutaway');
+        $('overview').click();
+        ok($('cut').value === $('cut').max, 'PASS · Fit map resets cutaway');
+        ok(app.labDebug.errors === 0, 'PASS · no application errors');
+        output.textContent += '\nAll live controls checks passed.';
+      } catch (error) {
+        key('Escape', 'Escape');
+        output.textContent += `\nFAIL · ${error.message}`;
+      } finally {
+        run.disabled = false;
+      }
+    };
+    </script>
+  </body>
+</html>

@@ -1,0 +1,117 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Inferno lamp visibility check</title>
+<style>
+body {
+  margin: 0;
+  background: #111a21;
+  color: #e4edf1;
+  font: 14px system-ui;
+}
+header {
+  padding: 16px;
+}
+button,
+select {
+  padding: 8px 14px;
+  margin-right: 8px;
+}
+canvas {
+  display: block;
+  width: 100%;
+  height: 80vh;
+}
+#status {
+  white-space: pre-line;
+}
+</style>
+<header>
+  <strong>Inferno lamp visibility</strong>
+  <p id="status">Loading…</p>
+  <button type="button" id="before">Show previous bug</button
+  ><button type="button" id="after">Show corrected lamp</button
+  ><label>Lamp <select id="lamp"></select></label
+  ><label
+    >View
+    <select id="angle">
+      <option value="0">Front</option>
+      <option value="1">Right</option>
+      <option value="2">Back</option>
+      <option value="3">Left</option>
+    </select></label
+  >
+</header>
+<canvas></canvas>
+<script type="module">
+import * as T from 'three';
+import { readBSP } from '../src/engine/bsp.ts';
+import { buildMapMeshes } from '../src/render/map.ts';
+
+const status = document.querySelector('#status'),
+  canvas = document.querySelector('canvas'),
+  lamp = document.querySelector('#lamp'),
+  angle = document.querySelector('#angle');
+try {
+  const response = await fetch('../assets/de_inferno.bsp');
+  if (!response.ok) throw Error('Import the local Inferno BSP first');
+  const bsp = readBSP(await response.arrayBuffer()),
+    renderer = new T.WebGLRenderer({ canvas, antialias: true });
+  renderer.outputColorSpace = T.SRGBColorSpace;
+  renderer.setClearColor(0x15212a);
+  const scene = new T.Scene(),
+    camera = new T.PerspectiveCamera(65, 1, 1, 10000);
+  camera.up.set(0, 0, 1);
+  const group = new T.Group();
+  scene.add(group);
+  let before = false;
+  for (const id of new Set(
+    bsp.faces.filter((f) => bsp.textures[f.texture].name === 'pi_lantern').map((f) => f.brush),
+  )) {
+    const option = document.createElement('option');
+    option.value = id;
+    option.textContent = `${id} · ${bsp.brushes[id].mins.join(', ')}`;
+    lamp.append(option);
+  }
+  lamp.value = '122';
+  function draw() {
+    for (const m of [...group.children]) {
+      group.remove(m);
+      m.geometry.dispose();
+      m.material.map?.dispose();
+      m.material.dispose();
+    }
+    group.add(
+      ...buildMapMeshes(before ? { ...bsp, entities: [] } : bsp, {
+        anisotropy: Math.min(8, renderer.capabilities.getMaxAnisotropy()),
+      }),
+    );
+    const b = bsp.brushes[Number(lamp.value)],
+      center = b.mins.map((v, j) => (v + b.maxs[j]) / 2),
+      a = (Number(angle.value) * Math.PI) / 2;
+    camera.position.set(
+      center[0] + Math.sin(a) * 145,
+      center[1] - Math.cos(a) * 145,
+      center[2] + 15,
+    );
+    camera.lookAt(...center);
+    renderer.setSize(innerWidth, innerHeight * 0.8, false);
+    camera.aspect = canvas.clientWidth / canvas.clientHeight;
+    camera.updateProjectionMatrix();
+    renderer.render(scene, camera);
+    status.textContent = `${before ? 'PREVIOUS: invisible collision box drawn over lantern' : 'CORRECTED: transparent collision box hidden; lantern visible'}\nLamp ${lamp.value} · collision geometry retained for movement and penetration.`;
+  }
+  document.querySelector('#before').onclick = () => {
+    before = true;
+    draw();
+  };
+  document.querySelector('#after').onclick = () => {
+    before = false;
+    draw();
+  };
+  lamp.onchange = angle.onchange = window.onresize = draw;
+  draw();
+} catch (e) {
+  status.textContent = `FAILED: ${e.message}`;
+  console.error(e);
+}
+</script>
