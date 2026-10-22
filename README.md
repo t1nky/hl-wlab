@@ -75,3 +75,9 @@ Original application code and tools in this web-only repository are
 Upstream copyrights and licenses remain in effect. See [NOTICE.md](NOTICE.md)
 and [source attribution](web/THIRD-PARTY.md). Game assets and Valve trademarks
 are not covered by this license and are not distributed here.
+
+## CS2 experiment
+
+The `cs2-poc` branch has a separate, local-only Inferno collision viewer and AWP
+trace/scan experiment. See [launch commands, tests, and accuracy limits](docs/cs2-poc.md).
+It does not change the CS1.6 application or publish game files.

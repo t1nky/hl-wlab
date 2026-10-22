@@ -1,0 +1,150 @@
+:root {
+  font:
+    13px / 1.5 system-ui,
+    sans-serif;
+  color: #dce6eb;
+  background: #10171d;
+  color-scheme: dark;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+main {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  height: 100vh;
+}
+aside {
+  padding: 20px;
+  overflow: auto;
+  border-right: 1px solid #33434c;
+  background: #172128;
+}
+h1 {
+  font-size: 21px;
+  margin: 6px 0 15px;
+}
+small {
+  color: #8eacb8;
+  letter-spacing: 0.12em;
+}
+p {
+  margin: 8px 0 14px;
+}
+.notice {
+  color: #f5cd8c;
+  border-left: 2px solid #c99042;
+  padding-left: 10px;
+  font-size: 12px;
+}
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0;
+}
+button {
+  border: 1px solid #49616b;
+  border-radius: 5px;
+  background: #273b46;
+  color: #e6f3f8;
+  padding: 7px 9px;
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+button:hover:enabled {
+  background: #3b5664;
+}
+label {
+  display: block;
+  margin-top: 8px;
+  font-size: 12px;
+  color: #a7bdc8;
+}
+input:not([type="checkbox"]) {
+  width: 100%;
+}
+input:not([type="range"], [type="checkbox"]) {
+  font:
+    12px ui-monospace,
+    monospace;
+  padding: 8px;
+  border: 1px solid #49616b;
+  border-radius: 4px;
+  background: #111d23;
+}
+#view {
+  position: relative;
+  overflow: hidden;
+}
+canvas {
+  display: block;
+}
+#hint {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  pointer-events: none;
+  background: #10212bda;
+  padding: 8px 12px;
+  border-radius: 5px;
+}
+h2 {
+  font-size: 17px;
+  margin: 15px 0 8px;
+}
+#result {
+  border-top: 1px solid #40545e;
+  margin-top: 12px;
+}
+.damage {
+  font-size: 25px;
+  color: #8de2be;
+}
+table {
+  width: 100%;
+  font-size: 11px;
+  border-collapse: collapse;
+}
+td,
+th {
+  text-align: left;
+  border-bottom: 1px solid #33434c;
+  padding: 4px 2px;
+}
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 10px;
+}
+details {
+  margin: 12px 0;
+  color: #a8bdc7;
+  font-size: 12px;
+}
+summary {
+  cursor: pointer;
+  color: #d3e4eb;
+}
+.help,
+#scan-status {
+  font-size: 11px;
+  color: #91aab7;
+}
+.error {
+  color: #ffab95;
+}
+@media (max-width: 800px) {
+  main {
+    grid-template-columns: 280px 1fr;
+  }
+  aside {
+    padding: 12px;
+  }
+}

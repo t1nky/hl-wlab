@@ -41,6 +41,14 @@ program and its build tooling, not imported proprietary content. Attribution
 and an unofficial-project notice do not grant permission to redistribute game
 assets or use Valve branding.
 
+The isolated CS2 experiment uses ValveResourceFormat 20.1.7467 (MIT) for local
+VPK/resource/physics parsing and three-mesh-bvh 0.9.8 (MIT) for browser ray
+acceleration. Their notices are in `licenses/VRF-LICENSE.txt` and
+`licenses/THREE-MESH-BVH-LICENSE.txt`. No Valve engine source or
+ExternalAutoWallCS2 code is incorporated. CS2 game data and prepared collision
+packages remain in ignored local storage; they are not part of this program's
+source distribution.
+
 References:
 
 - [Valve legal and trademark information](https://store.steampowered.com/legal/)

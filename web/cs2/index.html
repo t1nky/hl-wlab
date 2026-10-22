@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>CS2 · Inferno collision POC</title>
+  </head>
+  <body>
+    <main>
+      <aside>
+        <header>
+          <small>LOCAL EXPERIMENT / CS2</small>
+          <h1>Inferno · AWP trace</h1>
+        </header>
+        <p id="load" role="status">Loading local collision package and building worker BVH…</p>
+        <p class="notice">
+          Simulator only. Collision diagnostic, unvalidated damage estimate. Static geometry; doors
+          and movable entities omitted.
+        </p>
+        <div class="buttons">
+          <button id="source-pick" type="button" disabled>Pick source floor</button
+          ><button id="target-pick" type="button" disabled>Pick target floor</button>
+        </div>
+        <label for="source">Source eye · X Y Z</label>
+        <input id="source" value="-1586.52 440.79 18" autocomplete="off">
+        <label for="target">Target point · X Y Z</label>
+        <input id="target" value="-1520.06 430.891 2" autocomplete="off">
+        <div class="buttons">
+          <button id="trace" type="button" disabled>Trace AWP</button
+          ><button id="focus" type="button">Frame shot</button
+          ><button id="overview" type="button">Map overview</button>
+        </div>
+        <div class="buttons">
+          <button id="scan" type="button" disabled>Scan 25 × 25</button
+          ><button id="cancel" type="button" disabled>Cancel</button
+          ><button id="clear" type="button">Clear scan</button>
+        </div>
+        <p id="scan-status">64-unit grid · ±768 units · standability approximation</p>
+        <label for="cut">Cutaway ceiling · <span id="cut-value">900</span> units</label>
+        <input id="cut" type="range" min="0" max="2500" value="900">
+        <label><input id="clip" type="checkbox"> Show player-only collision (purple)</label>
+        <section id="result" aria-live="polite">
+          <h2>Shot result</h2>
+          <p>Waiting for map…</p>
+        </section>
+        <details>
+          <summary>Coordinates & repeatable offline commands</summary>
+          <pre id="commands"></pre>
+          <p>
+            Source is eye position. Commands use standing feet (eye -64). Target is a point, with no
+            player pose, hitgroup, or armor. Run manually in an offline practice map only.
+          </p>
+        </details>
+        <details>
+          <summary>Coverage & model limits</summary>
+          <p id="coverage"></p>
+          <p>
+            World vphys + separate static model physics. Physical hulls and per-triangle surface
+            IDs, not render meshes. Closed mesh winding is required; inconsistent intersections
+            return indeterminate. Overlapping solids use the more resistant material. Scan checks a
+            32 × 32 × 72 box and flat support, but no route/navigation connectivity.
+          </p>
+          <p>
+            Damage uses an illustrative 24 × penetration thickness budget, local distance modifiers,
+            and damage modifiers as retention. This is not Valve’s post-2025 formula. Unknown
+            material values return indeterminate. No spread, ricochet, live breakage, armor, or
+            hitgroup simulation.
+          </p>
+        </details>
+        <p class="help">
+          Drag to orbit · right-drag to pan · wheel to zoom. Pick a visible floor to place eye/chest
+          64/48 units above it. Orange = source, cyan = target. Scan: green estimate reaches, red
+          blocked, purple indeterminate. Click a scan point to inspect its shot.
+        </p>
+      </aside>
+      <div id="view">
+        <div id="hint">Real Inferno collision · surfaces colored by material</div>
+      </div>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

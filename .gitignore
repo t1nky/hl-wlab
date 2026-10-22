@@ -41,3 +41,24 @@ node_modules/
 *.pem
 *.key
 *~
+
+# Source 2 game content and prepared packages.
+*.vpk
+*.vmap_c
+*.vmdl_c
+*.vmesh_c
+*.vphys_c
+*.vmat_c
+*.vtex_c
+*.vwrld_c
+*.vwnod_c
+*.vents_c
+*.vsurf_c
+*.nav
+*.glb
+*.gltf
+*.cs2map
+*.v*_c
+*.bin
+/tools/cs2-import/bin/
+/tools/cs2-import/obj/

@@ -19,10 +19,15 @@
     "test:watch": "bun --bun vitest --config web/vite.config.ts",
     "check": "bun run lint && bun run test && bun run build",
     "check:repo": "bun tools/check-repo.mjs",
-    "check:pages": "bun tools/check-pages.mjs"
+    "check:pages": "bun tools/check-pages.mjs",
+    "cs2:prepare": "bun tools/cs2-prepare.mjs",
+    "cs2:dev": "bun --bun vite --config web/cs2/vite.config.ts",
+    "cs2:check": "tsc --noEmit -p web/cs2/tsconfig.json && bun --bun vite build --config web/cs2/vite.config.ts",
+    "cs2:smoke": "bun tools/cs2-smoke.mjs"
   },
   "dependencies": {
-    "three": "0.170.0"
+    "three": "0.170.0",
+    "three-mesh-bvh": "0.9.8"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.2",

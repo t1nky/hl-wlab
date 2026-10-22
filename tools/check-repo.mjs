@@ -10,7 +10,11 @@ const blocked =
 const failures = [];
 let total = 0;
 for (const p of paths) {
-  if (blocked.test(p)) {
+  if (
+    blocked.test(p) ||
+    /\.(vpk|v[a-z0-9_]+_c|nav|glb|gltf|cs2map|bin)$/i.test(p) ||
+    /^tools\/cs2-import\/(bin|obj)\//i.test(p)
+  ) {
     failures.push(`${p} [excluded content]`);
     continue;
   }
