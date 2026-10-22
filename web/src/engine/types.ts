@@ -116,6 +116,8 @@ export interface Progress {
   phase: string;
   total: number;
   done: number;
+  /** Candidate enumeration has finished, so the total will no longer grow. */
+  totalKnown: boolean;
   reused?: number;
   placementReused?: number;
   computed?: number;

@@ -21,6 +21,7 @@ import { errorMessage } from './ui/errors.ts';
 import { initializeLibrary } from './ui/game-library.ts';
 import { movementKey, navigationAction, nextVisible } from './ui/navigation.ts';
 import { loadPrefs, PREFS, savePrefs } from './ui/preferences.ts';
+import { scanFraction } from './ui/scan-progress.ts';
 import { initializeWeapons, selectedWeapon, selectedWeaponID, selectWeapon } from './ui/weapons.ts';
 import './style.css';
 import * as THREE from 'three';
@@ -814,19 +815,22 @@ function projectClick(e: PointerEvent) {
   }
   if (best >= 0) selectPoint(best);
 }
-// The total keeps growing while the grid is prepared, so a time estimate is only meaningful once tracing has begun.
+// Percentages and ETA need the final grid size, even though tracing starts earlier.
 function progress(m: Omit<Progress, 'type'>, summary?: string) {
   const seconds = m.seconds || 0,
     rate = m.done / Math.max(0.001, seconds),
-    eta = m.computed && m.total > m.done ? (m.total - m.done) / Math.max(1, rate) : 0;
-  $('progress').max = Math.max(1, m.total);
-  $('progress').value = m.done || 0;
+    eta =
+      m.totalKnown && m.computed && m.total > m.done ? (m.total - m.done) / Math.max(1, rate) : 0,
+    fraction = scanFraction(m);
+  $('progress').max = 1;
+  if (fraction === null) $('progress').removeAttribute('value');
+  else $('progress').value = fraction;
   $('progressText').textContent =
     summary ||
     `${m.phase}${m.total ? ` · ${fmt(m.done)}/${fmt(m.total)}` : ''}${eta ? ` · ~${eta.toFixed(1)} s left` : ''}`;
   $('progressText').title =
     `${fmt(m.reused)} cached · ${fmt(m.placementReused)} placements reused · ${fmt(m.computed)} new · ${seconds.toFixed(2)} s`;
-  design.progress(m.phase, m.done, m.total, seconds, eta);
+  design.progress(m.phase, fraction, seconds, eta);
   window.labProgress = m;
 }
 function lockScan(active: boolean) {

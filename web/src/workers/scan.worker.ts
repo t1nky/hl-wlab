@@ -88,6 +88,7 @@ async function scan(m: ScanRequest) {
     shots: TileCache | undefined,
     total = 0,
     done = 0,
+    totalKnown = false,
     reused = 0,
     placementReused = 0,
     computed = 0,
@@ -98,6 +99,7 @@ async function scan(m: ScanRequest) {
       phase,
       total,
       done,
+      totalKnown,
       reused,
       placementReused,
       computed,
@@ -124,7 +126,13 @@ async function scan(m: ScanRequest) {
         m.expansion +
         weaponShotKey(getWeapon(m.weapon)),
     );
-    postMessage({ type: 'progress', phase: 'Opening persistent cache', done: 0, total: 0 });
+    postMessage({
+      type: 'progress',
+      phase: 'Opening persistent cache',
+      done: 0,
+      total: 0,
+      totalKnown: false,
+    });
     try {
       await dropLegacyTiles();
       [geo, shots] = await Promise.all([
@@ -296,6 +304,7 @@ async function scan(m: ScanRequest) {
         lastYield = performance.now();
       }
     }
+    totalKnown = !cancelled && !failed;
     seal();
     prepared = true;
     emit('Tracing in WebAssembly');
@@ -313,6 +322,7 @@ async function scan(m: ScanRequest) {
         cancelled,
         total,
         done,
+        totalKnown,
         reused,
         placementReused,
         computed,

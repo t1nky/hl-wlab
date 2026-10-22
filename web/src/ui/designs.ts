@@ -365,20 +365,29 @@ export const design = {
     root.dataset.scanning = String(active);
     stopSlot.inert = !active;
     stopSlot.setAttribute('aria-hidden', String(!active));
-    $('scan').textContent = active ? 'Scanning…' : 'Scan positions';
+    $('scan').textContent = active ? 'Preparing…' : 'Scan positions';
     $('scan').setAttribute('aria-busy', String(active));
-    if (active) $('progressText').textContent = 'Preparing scan…';
+    if (active) {
+      $('progress').removeAttribute('value');
+      $('progressText').textContent = 'Preparing scan…';
+    }
   },
-  progress(phase: string, done: number, total: number, seconds: number, eta: number) {
+  progress(phase: string, fraction: number | null, seconds: number, eta: number) {
     if (!initialized) return;
     $('progressText').textContent =
       phase === 'Complete' || phase === 'Cancelled'
         ? `${phase === 'Complete' ? 'Scan complete' : 'Stopped'} · ${seconds.toFixed(2)} s`
-        : `${phase}${total ? ` · ${Math.floor((done / total) * 100)}%` : ''}${eta ? ` · ~${eta.toFixed(0)} s left` : ''}`;
+        : `${phase}${fraction !== null ? ` · ${Math.floor(fraction * 100)}%` : ''}${eta ? ` · ~${eta.toFixed(0)} s left` : ''}`;
     if (root.dataset.scanning === 'true') {
-      const fraction = total > 0 ? Math.max(0, Math.min(1, done / total)) : 0;
-      $('scan').style.setProperty('--scan-progress', String(fraction));
-      $('scan').textContent = total ? `Scanning ${Math.floor(fraction * 100)}%` : 'Scanning…';
+      $('scan').style.setProperty('--scan-progress', String(fraction ?? 0));
+      $('scan').textContent =
+        phase === 'Stopping'
+          ? 'Stopping…'
+          : phase === 'Saving cache'
+            ? 'Saving…'
+            : fraction === null
+              ? 'Preparing…'
+              : `Scanning ${Math.floor(fraction * 100)}%`;
     }
   },
   results(count: number) {
