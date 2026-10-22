@@ -27,6 +27,7 @@ function offlineShell(): Plugin {
         'ReHLDS-LICENSE.txt',
         'ReGameDLL-LICENSE.txt',
         'THREE-LICENSE.txt',
+        'OCTICONS-LICENSE.txt',
       ])
         files.push(`${base}licenses/${name}`);
       const version = createHash('sha256')

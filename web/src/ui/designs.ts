@@ -1,4 +1,5 @@
 import { $ } from './dom.ts';
+import githubMark from './github.svg?raw';
 import './designs.css';
 
 type Layout = 'workbench' | 'canvas';
@@ -86,13 +87,19 @@ export const design = {
     about.target = '_blank';
     about.rel = 'noopener';
     about.title = 'Static, zero-spread simulation. Game parity is not certified. Read limitations.';
-    header.replaceChildren(brand, about);
+    const headerActions = node('div', 'design-header-actions');
     if (import.meta.env.VITE_PUBLIC_BUILD === '1') {
-      const source = node('a', 'design-about', 'Source');
+      const source = node('a', 'design-source');
       source.href = `${import.meta.env.BASE_URL}source.html`;
-      source.title = 'Matching application source and licenses';
-      header.insertBefore(source, about);
+      source.title = 'Source and licenses';
+      source.setAttribute('aria-label', 'Source and licenses');
+      source.innerHTML = githubMark;
+      source.querySelector('svg')?.setAttribute('aria-hidden', 'true');
+      source.querySelector('svg')?.setAttribute('focusable', 'false');
+      headerActions.append(source);
     }
+    headerActions.append(about);
+    header.replaceChildren(brand, $('modeHint'), headerActions);
 
     const sections = Array.from(aside.querySelectorAll(':scope > section'));
     const [maps, target, scan] = sections;
@@ -148,6 +155,7 @@ export const design = {
     const scanActions = $('scan').parentElement;
     if (scanActions) dock.append(scanActions);
     dock.append($('progress'), $('progressText'));
+    $('progress').setAttribute('aria-label', 'Scan progress');
     $('scan').textContent = 'Scan positions';
     $('scan').title = 'Scan valid firing positions using the current target and weapon';
     $('scan').setAttribute('aria-keyshortcuts', 'Control+Enter Meta+Enter');
@@ -340,11 +348,15 @@ export const design = {
     viewSummary.textContent = off ? 'View' : 'View · cut';
   },
   filtered(visible: number, total: number, weak: number) {
-    if (initialized) resetFilters.hidden = !total || visible > 0 || weak > 0;
+    if (!initialized) return;
+    resetFilters.hidden = !total || visible > 0 || weak > 0;
+    $('filterInfo').dataset.notice = String(total > 0 && (visible === 0 || weak > 0));
   },
   scanning(active: boolean) {
     if (!initialized) return;
     root.dataset.scanning = String(active);
+    $('scan').textContent = active ? 'Scanning…' : 'Scan positions';
+    $('scan').setAttribute('aria-busy', String(active));
     if (active) $('progressText').textContent = 'Preparing scan…';
   },
   progress(phase: string, done: number, total: number, seconds: number, eta: number) {
@@ -353,6 +365,9 @@ export const design = {
       phase === 'Complete' || phase === 'Cancelled'
         ? `${phase === 'Complete' ? 'Scan complete' : 'Stopped'} · ${seconds.toFixed(2)} s`
         : `${phase}${total ? ` · ${Math.floor((done / total) * 100)}%` : ''}${eta ? ` · ~${eta.toFixed(0)} s left` : ''}`;
+    if (root.dataset.scanning === 'true') {
+      $('scan').textContent = total ? `Scanning ${Math.floor((done / total) * 100)}%` : 'Scanning…';
+    }
   },
   results(count: number) {
     if (initialized) root.dataset.results = String(count > 0);

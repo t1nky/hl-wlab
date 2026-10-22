@@ -5,6 +5,7 @@
 - GoldSrc binary-format field descriptions were checked against Valve's engine/studio.h: https://github.com/ValveSoftware/halflife/blob/master/engine/studio.h . No game binary or Valve SDK source is embedded in the application code.
 - The original WAD3 reader uses binary-format field descriptions from Valve's `utils/common/wadlib.h`: https://github.com/ValveSoftware/halflife/blob/master/utils/common/wadlib.h . No Valve SDK implementation is bundled.
 - Three.js 0.170.0 and OrbitControls: https://github.com/mrdoob/three.js/tree/r170 . MIT license retained in public/licenses/THREE-LICENSE.txt. The pinned npm package is bundled locally by Vite; no runtime CDN is used.
+- GitHub mark from [Primer Octicons](https://github.com/primer/octicons/blob/main/icons/mark-github-16.svg), MIT. The SVG is bundled in the application; its license is retained in public/licenses/OCTICONS-LICENSE.txt.
 - Imported BSP, MDL, texture and material assets belong to their respective owners. No example game assets are supplied. Users import their own game assets locally.
 
 Weapon presets also reference the same ReGameDLL_CS tag's `regamedll/dlls/weapons.h`,

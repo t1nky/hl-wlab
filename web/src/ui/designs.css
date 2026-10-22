@@ -157,6 +157,37 @@
   padding: 2px 6px;
   border-radius: 4px;
 }
+[data-design] .design-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+[data-design] .design-source {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  color: var(--muted);
+  text-decoration: none;
+}
+[data-design] .design-source:hover {
+  color: #e7e7ed;
+}
+[data-design] .design-source:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+[data-design] .design-source svg {
+  display: block;
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
 [data-design] main {
   grid-template-columns: 272px minmax(0, 1fr);
   position: relative;
@@ -264,7 +295,8 @@
   color: #de9b9e;
 }
 [data-design] .design-scan-dock {
-  padding: 14px 18px 16px;
+  position: relative;
+  padding: 8px 12px;
   background: #17181e;
   border-top: 1px solid var(--line);
 }
@@ -275,19 +307,25 @@
   flex: 1;
 }
 [data-design] #progressText {
+  position: absolute;
   min-height: 0;
-  margin-top: 8px;
-  font-size: 10px;
-  line-height: 1.5;
-  color: #92939f;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+  clip-path: inset(50%);
 }
 [data-design] #progress {
-  margin: 10px 0 0;
+  position: absolute;
+  left: 12px;
+  bottom: 3px;
+  width: calc(100% - 24px);
+  margin: 0;
   display: block;
-  height: 3px;
+  height: 2px;
 }
 [data-design][data-scanning="false"] #cancel,
 [data-design][data-scanning="false"] #progress {
@@ -427,7 +465,7 @@
 }
 [data-design] #filters {
   position: absolute;
-  bottom: 44px;
+  bottom: 20px;
   left: 20px;
   right: 20px;
   width: fit-content;
@@ -439,6 +477,10 @@
   gap: 8px 14px;
   border-radius: 8px;
   box-shadow: 0 4px 24px #0003;
+}
+[data-design] #filters label {
+  margin: 0;
+  white-space: nowrap;
 }
 [data-design] .chips {
   gap: 2px;
@@ -455,6 +497,7 @@
   padding: 5px 6px;
   gap: 5px;
   font-size: 10px;
+  min-height: 30px;
 }
 [data-design] .chip:not(:has(:checked)) {
   opacity: 1;
@@ -481,20 +524,46 @@
   border-width: 2px;
 }
 [data-design] #filters .inline {
+  display: grid;
+  grid-template-columns: max-content 88px 34px;
+  min-height: 30px;
   font-size: 10px;
-  gap: 6px;
+  gap: 8px;
 }
 [data-design] #minDamage {
-  width: 80px;
+  width: 88px;
+  margin: 0;
+  padding: 0;
 }
 [data-design] #minDamageValue {
   font-size: 10px;
   min-width: 32px;
+  text-align: right;
 }
 [data-design] #filterInfo {
-  flex-basis: 100%;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  clip-path: inset(50%);
+}
+[data-design] #filterInfo[data-notice="true"] {
+  right: 0;
+  bottom: calc(100% + 8px);
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #191a20f5;
+  white-space: normal;
+  clip-path: none;
   font-size: 10px;
-  padding: 0 6px;
 }
 [data-design] #detail {
   position: absolute;
@@ -542,15 +611,18 @@
   font-size: 18px;
 }
 [data-design] #modeHint {
-  top: auto;
-  bottom: 12px;
-  left: 24px;
+  position: static;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
   background: transparent;
   padding: 0;
   color: #a4a5b2;
   font-size: 10px;
-  text-shadow: 0 1px 4px #000;
-  z-index: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: auto;
 }
 [data-design] #error {
   position: absolute;
@@ -643,12 +715,6 @@
   left: auto;
   right: 20px;
 }
-[data-design="canvas"] #modeHint {
-  left: auto;
-  right: 24px;
-  max-width: calc(100% - 350px);
-  text-align: right;
-}
 [data-design="canvas"] #error {
   left: auto;
   right: 20px;
@@ -692,13 +758,14 @@
     min-height: 48px;
   }
   [data-design] .design-brand {
-    flex-basis: calc(100% - 92px);
     gap: 8px;
   }
-  [data-design] .design-about {
-    position: absolute;
-    top: 16px;
-    right: 12px;
+  [data-design] header {
+    gap: 4px 12px;
+  }
+  [data-design] .design-header-actions {
+    order: 1;
+    gap: 8px;
   }
   [data-design] main,
   [data-design="canvas"] main {
@@ -737,7 +804,8 @@
   }
   [data-design] .design-scan-dock,
   [data-design="canvas"] .design-scan-dock {
-    position: static;
+    position: relative;
+    inset: auto;
     width: auto;
     border-radius: 0;
     box-shadow: none;
@@ -762,7 +830,7 @@
   [data-design="canvas"] #filters {
     left: 12px;
     right: 12px;
-    bottom: 44px;
+    bottom: 12px;
     max-width: calc(100% - 24px);
     flex-wrap: wrap;
     width: auto;
@@ -782,12 +850,9 @@
     bottom: auto;
     width: min(294px, calc(100% - 24px));
   }
-  [data-design] #modeHint,
-  [data-design="canvas"] #modeHint {
-    left: 16px;
-    right: 16px;
-    bottom: 10px;
-    max-width: none;
+  [data-design] #modeHint {
+    order: 2;
+    flex-basis: 100%;
     font-size: 9px;
   }
   [data-design] #error {
