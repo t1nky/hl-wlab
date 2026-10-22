@@ -323,14 +323,6 @@ output {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
-#filterInfo.warn {
-  color: var(--warn);
-}
-#showWeak {
-  margin-left: 8px;
-  padding: 2px 8px;
-  font-size: 12px;
-}
 #detail {
   display: flex;
   align-items: center;

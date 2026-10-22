@@ -354,10 +354,10 @@ export const design = {
     cutValue.textContent = off ? 'Off' : `${Math.round(value)} u`;
     viewSummary.textContent = off ? 'View' : 'View · cut';
   },
-  filtered(visible: number, total: number, weak: number) {
+  filtered(visible: number, total: number) {
     if (!initialized) return;
-    resetFilters.hidden = !total || visible > 0 || weak > 0;
-    $('filterInfo').dataset.notice = String(total > 0 && (visible === 0 || weak > 0));
+    resetFilters.hidden = !total || visible > 0;
+    $('filterInfo').dataset.notice = String(total > 0 && visible === 0);
   },
   scanning(active: boolean) {
     if (!initialized) return;

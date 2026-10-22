@@ -40,34 +40,48 @@ test('armor can move the best shot to an unprotected anchor and turn a direct hi
   assert.deepEqual([bestShot(r, 1, 100).anchor, bestShot(r, 1, 100).hp], [2, 98]);
   assert.deepEqual([...classify(r, 0, 0).kind, ...classify(r, 1, 100).kind], [1, 2]);
 });
-test('chip counts ignore their own toggle, and the damage filter reports hidden hits but never hides misses', () => {
+test('chip counts ignore their own toggle and hits below the damage threshold form their own category', () => {
   const hp = new Float32Array([120, 40, 90, 0, 0]),
     kind = new Float32Array([1, 2, 5, 0, 3]);
   const all = countVisible(hp, kind, {
-    types: [true, true, true],
+    types: [true, true, true, false],
     stances: [true, true],
     minDamage: 1,
   });
-  assert.deepEqual(
-    [all.visible, all.weak, all.typeCounts, all.stanceCounts],
-    [5, 0, [2, 1, 2], [3, 2]],
-  );
+  assert.deepEqual([all.visible, all.typeCounts, all.stanceCounts], [5, [2, 1, 2, 0], [3, 2]]);
   const strict = countVisible(hp, kind, {
-    types: [true, true, true],
+    types: [true, true, true, false],
     stances: [true, true],
     minDamage: 100,
   });
   assert.deepEqual(
-    [strict.visible, strict.weak, strict.typeCounts, [...strict.shown]],
-    [3, 2, [2, 1, 0], [1, 0, 0, 1, 1]],
+    [strict.visible, strict.typeCounts, [...strict.shown]],
+    [3, [2, 1, 0, 2], [1, 0, 0, 1, 1]],
   );
   const directStandingOnly = countVisible(hp, kind, {
-    types: [false, true, false],
+    types: [false, true, false, false],
     stances: [true, false],
     minDamage: 1,
   });
   assert.deepEqual(
     [directStandingOnly.visible, directStandingOnly.typeCounts, directStandingOnly.stanceCounts],
-    [1, [1, 1, 1], [1, 0]],
+    [1, [1, 1, 1, 0], [1, 0]],
   );
+});
+test('Below min works independently of hit types, respects stance, and excludes misses and the threshold itself', () => {
+  const hp = new Float32Array([100, 99, 1, 0, 50, 99, 100, 0]),
+    kind = new Float32Array([2, 2, 1, 0, 5, 4, 4, 3]),
+    filters = { types: [false, false, false, true], stances: [true, false], minDamage: 100 },
+    low = countVisible(hp, kind, filters);
+  assert.deepEqual(
+    [low.visible, low.typeCounts, low.stanceCounts, [...low.shown]],
+    [2, [1, 0, 1, 2], [2, 2], [0, 1, 1, 0, 0, 0, 0, 0]],
+  );
+  const off = countVisible(hp, kind, { ...filters, types: [false, false, false, false] });
+  assert.equal(off.visible, 0);
+  assert.deepEqual(off.typeCounts, low.typeCounts);
+  const bothStances = countVisible(hp, kind, { ...filters, stances: [true, true] });
+  assert.deepEqual([bothStances.visible, bothStances.typeCounts], [4, [2, 1, 1, 4]]);
+  const oneHP = countVisible(hp, kind, { ...filters, minDamage: 1 });
+  assert.deepEqual([oneHP.visible, oneHP.typeCounts], [0, [1, 1, 2, 0]]);
 });

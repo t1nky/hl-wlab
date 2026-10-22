@@ -96,7 +96,6 @@ let bsp: BSP,
   kind = new Float32Array(),
   shown = new Uint8Array(),
   shownCount = 0,
-  weakCount = 0,
   selection: number | null = null,
   selectionLine: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial> | null,
   mode: Mode = 'orbit',
@@ -126,7 +125,7 @@ const cut = new THREE.Plane(new THREE.Vector3(0, 0, -1), 600);
 renderer.clippingPlanes = [cut];
 // kind encoding: see results.js. Hit-type, stance and damage filters are uniforms, so toggles and the damage
 // slider never rebuild 100k+ point buffers.
-const pointMaterial = createPointMaterial(['miss', 'direct', 'wallbang'].map(cssColor));
+const pointMaterial = createPointMaterial(['miss', 'direct', 'wallbang', 'weak'].map(cssColor));
 const pointCloud = new THREE.Points(new THREE.BufferGeometry(), pointMaterial);
 scene.add(pointCloud);
 // Screen-sized markers stay findable at whole-map zoom, where hitbox wireframes shrink to a few pixels.
@@ -357,10 +356,12 @@ function updatePoints(preserveSelection = false) {
   if (previous !== null && shown[previous]) selectPoint(previous);
 }
 function filterPoints() {
-  const types = (['showMiss', 'showDirect', 'showWallbang'] as const).map((id) => $(id).checked),
+  const types = (['showMiss', 'showDirect', 'showWallbang', 'showWeak'] as const).map(
+      (id) => $(id).checked,
+    ),
     stances = (['showStanding', 'showCrouching'] as const).map((id) => $(id).checked),
     minDamage = number('minDamage'),
-    { typeCounts, stanceCounts, visible, weak } = countVisible(
+    { typeCounts, stanceCounts, visible } = countVisible(
       hp,
       kind,
       { types, stances, minDamage },
@@ -368,11 +369,10 @@ function filterPoints() {
     ),
     u = pointMaterial.uniforms;
   shownCount = visible;
-  weakCount = weak;
   u.show.value.set(...types.map(Number));
   u.stances.value.set(...stances.map(Number));
   u.minDamage.value = minDamage;
-  (['countMiss', 'countDirect', 'countWallbang'] as const).forEach((id, i) => {
+  (['countMiss', 'countDirect', 'countWallbang', 'countWeak'] as const).forEach((id, i) => {
     $(id).textContent = fmt(typeCounts[i]);
   });
   (['countStanding', 'countCrouching'] as const).forEach((id, i) => {
@@ -380,17 +380,14 @@ function filterPoints() {
   });
   $('minDamageValue').textContent = `${minDamage} HP`;
   updateFilterStatus();
-  $('showWeak').hidden = !weak;
-  $('filterInfo').classList.toggle('warn', weak > 0);
-  design.filtered(visible, kind.length, weak);
+  design.filtered(visible, kind.length);
   if (selection !== null && !shown[selection]) clearSelection();
   schedule();
 }
 function updateFilterStatus() {
   const clipped = cut.constant < Number($('cut').max);
   $('filterText').textContent = kind.length
-    ? `${fmt(shownCount)} of ${fmt(kind.length)} positions ${clipped ? 'match filters · cutaway on' : 'shown'}` +
-      (weakCount ? ` · ${fmt(weakCount)} hits under ${number('minDamage')} HP hidden` : '')
+    ? `${fmt(shownCount)} of ${fmt(kind.length)} positions ${clipped ? 'match filters · cutaway on' : 'shown'}`
     : '';
 }
 function syncArmor() {
@@ -981,20 +978,16 @@ for (const id of [
   'showWallbang',
   'showDirect',
   'showMiss',
+  'showWeak',
   'showStanding',
   'showCrouching',
   'minDamage',
 ] as const)
   $(id).addEventListener('input', filterPoints);
 for (const id of PREFS) $(id).addEventListener('change', savePrefs);
-$('showWeak').onclick = () => {
-  $('minDamage').value = String(1);
-  filterPoints();
-  savePrefs();
-};
 function resetFilters() {
   for (const id of ['showWallbang', 'showDirect', 'showStanding'] as const) $(id).checked = true;
-  for (const id of ['showMiss', 'showCrouching'] as const) $(id).checked = false;
+  for (const id of ['showMiss', 'showWeak', 'showCrouching'] as const) $(id).checked = false;
   $('minDamage').value = '1';
   filterPoints();
   savePrefs();

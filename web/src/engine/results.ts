@@ -47,26 +47,24 @@ export function classify(
   return { positions, hp, kind };
 }
 // Each chip counts what it would show under the other active filters, so switching a chip off never hides its number.
-// Misses have no damage, so the damage threshold only applies to hits.
+// Hits below the threshold form a separate fourth category. Misses have no damage and stay misses.
 export function countVisible(
   hp: Float32Array,
   kind: Float32Array,
   { types, stances, minDamage }: Filters,
   shown = new Uint8Array(kind.length),
 ) {
-  const typeCounts = [0, 0, 0],
+  const typeCounts = [0, 0, 0, 0],
     stanceCounts = [0, 0];
-  let visible = 0,
-    weak = 0;
+  let visible = 0;
   for (let i = 0; i < kind.length; i++) {
     const s = kind[i] > 2 ? 1 : 0,
       t = kind[i] - 3 * s,
-      strong = t === 0 || hp[i] >= minDamage;
-    if (strong && stances[s]) typeCounts[t]++;
-    if (strong && types[t]) stanceCounts[s]++;
-    shown[i] = strong && types[t] && stances[s] ? 1 : 0;
+      bucket = t !== 0 && hp[i] < minDamage ? 3 : t;
+    if (stances[s]) typeCounts[bucket]++;
+    if (types[bucket]) stanceCounts[s]++;
+    shown[i] = types[bucket] && stances[s] ? 1 : 0;
     visible += shown[i];
-    if (!strong && types[t] && stances[s]) weak++;
   }
-  return { typeCounts, stanceCounts, visible, weak, shown };
+  return { typeCounts, stanceCounts, visible, shown };
 }

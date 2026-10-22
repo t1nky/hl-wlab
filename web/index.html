@@ -238,6 +238,11 @@
             ><label class="chip" title="Valid shooter positions where no anchor is hit"
               ><input id="showMiss" type="checkbox"><i class="swatch" style="--c:var(--miss)"></i>No
               hit<b id="countMiss">0</b></label
+            ><label
+              class="chip"
+              title="Hits below the minimum damage. Includes direct hits and wallbangs."
+              ><input id="showWeak" type="checkbox">
+              <i class="swatch" style="--c:var(--weak)"></i>Below min<b id="countWeak">0</b></label
             >
           </fieldset>
           <fieldset class="chips" aria-label="Shooter stance">
@@ -256,14 +261,11 @@
           </fieldset>
           <label
             class="inline"
-            title="Hide hits below this damage. 100 HP kills a full-health target."
+            title="Hits below this damage appear in Below min. 100 HP kills a full-health target."
             >Min damage<input id="minDamage" type="range" min="1" max="100" value="1">
             <output id="minDamageValue" for="minDamage">1 HP</output></label
           >
-          <p id="filterInfo" role="status">
-            <span id="filterText"></span
-            ><button type="button" id="showWeak" hidden>Show them</button>
-          </p>
+          <p id="filterInfo" role="status"><span id="filterText"></span></p>
         </div>
         <div id="detail">
           <p>

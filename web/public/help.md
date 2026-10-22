@@ -40,6 +40,9 @@ Click a result to inspect damage or stand at that position.
 View → Keyboard & mouse lists these bindings. Empty filters
 offer Reset filters. Enter in a bookmark name saves it.
 
+**Below min** shows hits below the damage slider's threshold, including direct
+hits and wallbangs. It has its own color and toggle; shooter stance still applies.
+
 In **Bookmarks**, enter a name and choose **Save position**. **Load** restores
 the saved map, exact view/player position, target pose and armor, selected firing
 point, weapon and scan/display settings. Rename or delete entries as needed.

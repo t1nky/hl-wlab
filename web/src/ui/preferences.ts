@@ -4,6 +4,7 @@ export const PREFS = [
   'showWallbang',
   'showDirect',
   'showMiss',
+  'showWeak',
   'showStanding',
   'showCrouching',
   'minDamage',
