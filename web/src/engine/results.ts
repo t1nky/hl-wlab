@@ -1,3 +1,4 @@
+import { type AimPoint, aimAnchor } from './aims.ts';
 import { damage } from './engine.ts';
 
 export interface Filters {
@@ -13,13 +14,18 @@ export function bestShot(
   armor: number,
   armorPoints: number,
   armorRatio?: number,
+  aimPoint: AimPoint = 'best',
 ) {
-  let best = { hp: 0, group: 0, walls: 0, anchor: 0, raw: 0 };
-  for (let a = 0; a < 3; a++) {
+  const fixed = aimAnchor(aimPoint),
+    first = fixed ?? 0,
+    end = fixed === undefined ? 3 : fixed + 1;
+  let best = { hp: 0, group: 0, walls: 0, anchor: first, raw: 0 };
+  for (let a = first; a < end; a++) {
     const raw = row[6 + a * 3],
       group = row[7 + a * 3],
       dealt = damage(raw, group, armor, armorPoints, armorRatio);
-    if (dealt > best.hp) best = { hp: dealt, group, walls: row[8 + a * 3], anchor: a, raw };
+    if (fixed !== undefined || dealt > best.hp)
+      best = { hp: dealt, group, walls: row[8 + a * 3], anchor: a, raw };
   }
   return best;
 }
@@ -30,6 +36,7 @@ export function classify(
   armor: number,
   armorPoints: number,
   armorRatio?: number,
+  aimPoint: AimPoint = 'best',
 ) {
   const n = rows.length / ROW,
     positions = new Float32Array(n * 3),
@@ -37,7 +44,7 @@ export function classify(
     kind = new Float32Array(n);
   for (let i = 0; i < n; i++) {
     const r = rows.subarray(i * ROW, (i + 1) * ROW),
-      best = bestShot(r, armor, armorPoints, armorRatio);
+      best = bestShot(r, armor, armorPoints, armorRatio, aimPoint);
     positions[i * 3] = r[2];
     positions[i * 3 + 1] = r[3];
     positions[i * 3 + 2] = r[4] - (r[0] ? 18 : 36) + 1;

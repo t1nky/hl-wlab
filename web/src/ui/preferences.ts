@@ -1,6 +1,7 @@
 import { control, preference } from './dom.ts';
 
 export const PREFS = [
+  'aimPoint',
   'showWallbang',
   'showDirect',
   'showMiss',

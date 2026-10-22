@@ -27,6 +27,7 @@ import { initializeWeapons, selectedWeapon, selectedWeaponID, selectWeapon } fro
 import './style.css';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { aimAnchor, isAimPoint } from './engine/aims.ts';
 import { readBSP, transform } from './engine/bsp.ts';
 import { damage, makeEngine } from './engine/engine.ts';
 import { Walker } from './engine/movement.ts';
@@ -40,7 +41,6 @@ import { get, hash, put } from './storage/cache.ts';
 type Mode = 'orbit' | 'walk' | 'fly';
 
 const canvas = $('canvas');
-const HEAD_AIM = 1; // Studio pose anchors are chest, head, pelvis.
 const HITGROUPS = [
   'generic',
   'head',
@@ -326,8 +326,7 @@ function updateTarget(invalidate = true) {
         new THREE.LineBasicMaterial({ color: cssValue('target'), depthTest: false }),
       ),
     );
-    targetMarker.position.fromArray(pose.aims[HEAD_AIM]);
-    targetMarker.visible = true;
+    syncAimMarker();
     syncSelectors();
     if (invalidate) {
       invalidateScan('Target changed. Scan to update.');
@@ -339,14 +338,36 @@ function updateTarget(invalidate = true) {
     return false;
   }
 }
+function selectedAimPoint() {
+  const point = $('aimPoint').value;
+  if (!isAimPoint(point)) throw Error('Choose an aim point');
+  return point;
+}
+function syncAimMarker(anchor = aimAnchor(selectedAimPoint()) ?? 1) {
+  if (!pose) return;
+  targetMarker.position.fromArray(pose.aims[anchor]);
+  targetMarker.visible = true;
+}
 const shotAt = (row: Float32Array) =>
-  bestShot(row, number('armor'), number('armorValue'), selectedWeapon().armorRatio);
+  bestShot(
+    row,
+    number('armor'),
+    number('armorValue'),
+    selectedWeapon().armorRatio,
+    selectedAimPoint(),
+  );
 // Rows are classified once per scan or armor change; filters afterwards only touch uniforms and typed arrays.
 function updatePoints(preserveSelection = false) {
   const previous = preserveSelection ? selection : null;
   clearSelection();
   design.results(rows.length / ROW);
-  const c = classify(rows, number('armor'), number('armorValue'), selectedWeapon().armorRatio),
+  const c = classify(
+      rows,
+      number('armor'),
+      number('armorValue'),
+      selectedWeapon().armorRatio,
+      selectedAimPoint(),
+    ),
     g = new THREE.BufferGeometry();
   hp = c.hp;
   kind = c.kind;
@@ -403,7 +424,7 @@ function focus() {
   const offset = camera.position.clone().sub(orbit.target);
   if (offset.lengthSq() < 1) offset.set(-1250, -1300, 1450);
   offset.setLength(Math.max(400, Math.min(2400, offset.length())));
-  orbit.target.fromArray(pose.aims[HEAD_AIM]);
+  orbit.target.copy(targetMarker.position);
   camera.position.copy(orbit.target).add(offset);
   orbit.update();
   schedule();
@@ -540,6 +561,7 @@ function captureBookmark() {
     throw Error('Set valid spacing and radius before saving');
   const state: BookmarkState = {
     target,
+    aimPoint: selectedAimPoint(),
     brushes: bsp.brushes.map(({ origin, angles, solid }) => ({ origin, angles, solid })),
     armor,
     armorValue,
@@ -583,6 +605,8 @@ async function restoreBookmark(assets: Assets, state: BookmarkState) {
       if (el instanceof HTMLInputElement && el.type === 'checkbox') el.checked = !!value;
       else el.value = String(value);
     }
+    // Old bookmarks used the strongest of all three cached anchors.
+    $('aimPoint').value = state.aimPoint ?? 'best';
     pointMaterial.depthTest = !$('xray').checked;
     await loadAssets({ ...assets, snapshot: JSON.stringify(state) });
     $('spacing').value = String(state.spacing);
@@ -644,7 +668,12 @@ function applySnapshot(text: string) {
       armor?: number;
       armorValue?: number;
       weapon?: string;
+      aimPoint?: unknown;
     };
+    if (data.aimPoint !== undefined) {
+      if (!isAimPoint(data.aimPoint)) throw Error('Invalid scene aim point');
+      $('aimPoint').value = data.aimPoint;
+    }
     if (data.weapon !== undefined) {
       selectWeapon(data.weapon);
       engine.setWeapon(selectedWeapon());
@@ -768,6 +797,7 @@ function clearSelection() {
   $('detailTitle').textContent = '';
   $('detailText').textContent = 'Click a point to see its damage and aim.';
   $('standHere').hidden = true;
+  syncAimMarker();
   schedule();
 }
 function selectPoint(i: number) {
@@ -777,6 +807,7 @@ function selectPoint(i: number) {
     aim = pose.aims[best.anchor];
   clearSelection();
   selection = i;
+  syncAimMarker(best.anchor);
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute([...eye, ...aim], 3));
   selectionLine = new THREE.Line(
@@ -976,6 +1007,7 @@ for (const id of ['spacing', 'radius'] as const) {
   $(id).addEventListener('change', () => invalidateScan('Scan settings changed. Scan to update.'));
 }
 $('armorValue').required = true;
+$('aimPoint').addEventListener('change', () => updatePoints(true));
 for (const id of ['armor', 'armorValue'] as const)
   $(id).addEventListener('change', () => {
     if (!$('armorValue').disabled && !$('armorValue').reportValidity()) return;
@@ -1161,6 +1193,7 @@ $('export').onclick = () => {
     mapHash: null as string | null,
     map: assetSet.mapName,
     target: targetSettings(),
+    aimPoint: selectedAimPoint(),
     armor: number('armor'),
     armorValue: number('armorValue'),
     weapon: $('weapon').value,

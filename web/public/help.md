@@ -44,6 +44,11 @@ Selectors support arrow keys, Enter to choose and Escape to cancel. Long lists
 include search; typing also opens a selector. Tab accepts the highlighted option
 and moves to the next control.
 
+In **Target**, **Aim point** selects Head (default), Chest or Pelvis. **Best damage**
+chooses the strongest of those three shots at each position. The marker and trace
+follow the chosen shot. Switching aim points uses existing scan results without
+retracing; bookmarks and exported scenes retain the choice.
+
 **Below min** shows hits below the damage slider's threshold, including direct
 hits and wallbangs. It has its own color and toggle; shooter stance still applies.
 

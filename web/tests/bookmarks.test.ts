@@ -30,6 +30,7 @@ function state(): BookmarkState {
     },
     brushes: [{ origin: [0, 0, 0], angles: [0, 90, 0], solid: true }],
     armor: 2,
+    aimPoint: 'pelvis',
     armorValue: 87,
     weapon: 'awp',
     expansion: 0.5,

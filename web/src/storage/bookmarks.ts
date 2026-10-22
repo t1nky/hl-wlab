@@ -1,3 +1,4 @@
+import type { AimPoint } from '../engine/aims.ts';
 import type { Assets, Brush, Skybox, Target } from '../engine/types.ts';
 import type { WeaponID } from '../engine/weapons.ts';
 import { db, hash, request, transaction } from './cache.ts';
@@ -6,6 +7,7 @@ import type { LibraryMapRef } from './library-types.ts';
 
 export interface BookmarkState {
   target: Target;
+  aimPoint?: AimPoint;
   brushes: Pick<Brush, 'origin' | 'angles' | 'solid'>[];
   armor: number;
   armorValue: number;

@@ -40,6 +40,36 @@ test('armor can move the best shot to an unprotected anchor and turn a direct hi
   assert.deepEqual([bestShot(r, 1, 100).anchor, bestShot(r, 1, 100).hp], [2, 98]);
   assert.deepEqual([...classify(r, 0, 0).kind, ...classify(r, 1, 100).kind], [1, 2]);
 });
+test('fixed aim points use their own cached damage and penetration, independent of stronger anchors', () => {
+  const r = row(0, [
+    [100, 2, 0],
+    [50, 1, 1],
+    [98, 6, 2],
+  ]);
+  for (const [point, anchor, hp, kind] of [
+    ['head', 1, 50, 2],
+    ['chest', 0, 100, 1],
+    ['pelvis', 2, 98, 2],
+    ['best', 0, 100, 1],
+  ] as const) {
+    const shot = bestShot(r, 0, 0, undefined, point);
+    assert.deepEqual([shot.anchor, shot.hp], [anchor, hp]);
+    const classified = classify(r, 0, 0, undefined, point);
+    assert.deepEqual([[...classified.hp], [...classified.kind]], [[hp], [kind]]);
+    assert.deepEqual([...classified.positions], [10, 20, 161]);
+  }
+  assert.equal(bestShot(r, 1, 100, undefined, 'best').anchor, 2);
+  assert.equal(bestShot(r, 1, 100, undefined, 'chest').anchor, 0);
+});
+test('a missed fixed anchor stays a miss and keeps its trace endpoint instead of falling back to the body', () => {
+  const r = row(1, [[120, 2, 0], none, [80, 6, 1]]),
+    before = new Float32Array(r);
+  const head = bestShot(r, 0, 0, undefined, 'head');
+  assert.deepEqual([head.hp, head.anchor], [0, 1]);
+  assert.deepEqual([...classify(r, 0, 0, undefined, 'head').kind], [3]);
+  assert.deepEqual([...classify(r, 0, 0, undefined, 'best').kind], [4]);
+  assert.deepEqual(r, before, 'changing aim points does not rewrite cached scan rows');
+});
 test('chip counts ignore their own toggle and hits below the damage threshold form their own category', () => {
   const hp = new Float32Array([120, 40, 90, 0, 0]),
     kind = new Float32Array([1, 2, 5, 0, 3]);

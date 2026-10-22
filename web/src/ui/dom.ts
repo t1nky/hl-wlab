@@ -30,6 +30,7 @@ const elements = {
   bookmarkDelete: element('bookmarkDelete', HTMLButtonElement),
   bookmarkStatus: element('bookmarkStatus', HTMLElement),
   targetPosture: element('targetPosture', HTMLSelectElement),
+  aimPoint: element('aimPoint', HTMLSelectElement),
   armor: element('armor', HTMLSelectElement),
   armorValue: element('armorValue', HTMLInputElement),
   tx: element('tx', HTMLInputElement),
