@@ -26,6 +26,7 @@ export interface Cs2Material {
   blendMode: number;
   opacity: number;
   depthBias?: boolean;
+  modelTintBaked?: boolean;
   uv: UvSettings;
   layers: { texture: number; uv: UvSettings }[];
 }

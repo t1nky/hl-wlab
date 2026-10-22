@@ -62,3 +62,5 @@ node_modules/
 *.bin
 /tools/cs2-import/bin/
 /tools/cs2-import/obj/
+/tools/cs2-import-tests/bin/
+/tools/cs2-import-tests/obj/

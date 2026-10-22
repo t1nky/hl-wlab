@@ -19,7 +19,7 @@ internal static class RenderExport
     private sealed record TextureInfo(string File, int Width, int Height, long Bytes);
     private sealed record MaterialInfo(string Path, string? Texture, bool KeepAlpha, string Shader,
         int BlendMode, float AlphaCutoff, float Opacity, Dictionary<string, Vector4> Vectors,
-        Dictionary<string, float> Floats, Dictionary<string, long> Integers, string[] Layers, bool Tools);
+        Dictionary<string, float> Floats, Dictionary<string, long> Integers, Dictionary<string, string> Textures, string[] Layers, bool Tools);
     private sealed class Reporter : IProgress<string>
     {
         public void Report(string value) { /* Per-mesh VRF progress is too noisy; report per chunk below. */ }
@@ -55,7 +55,7 @@ internal static class RenderExport
                     material.FloatParams.GetValueOrDefault("g_flAlphaTestReference", 0.5f),
                     material.FloatParams.GetValueOrDefault("g_flOpacityScale", 1f),
                     new(material.VectorParams), new(material.FloatParams),
-                    material.IntParams.ToDictionary(p => p.Key, p => (long)p.Value), layers.ToArray(), material.IntAttributes.ContainsKey("tools.toolsmaterial"));
+                    material.IntParams.ToDictionary(p => p.Key, p => (long)p.Value), new(material.TextureParams), layers.ToArray(), material.IntAttributes.ContainsKey("tools.toolsmaterial"));
                 if (Materials.TryGetValue(key, out var prior) && (prior.Texture != color || prior.KeepAlpha != alpha))
                     throw new InvalidDataException("Ambiguous render material basename: " + key);
                 Materials[key] = info;
@@ -76,6 +76,7 @@ internal static class RenderExport
         var timer = Stopwatch.StartNew();
         var fingerprint = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(
             collisionFingerprint + File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-import/RenderExport.cs")) +
+            File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-import/RenderTint.cs")) +
             File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-prepare.mjs")) +
             File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-render-pack.mjs")))));
         var manifest = Path.Combine(output, "render.json");
@@ -106,7 +107,7 @@ internal static class RenderExport
         var chunks = new List<string>();
         var textures = new Dictionary<string, TextureInfo>();
         var warnings = new HashSet<string>();
-        var primitives = 0; var meshCount = 0; var triangleCount = 0L; var texturedTriangleCount = 0L; var materialCount = 0; var excludedLods = 0;
+        var primitives = 0; var meshCount = 0; var triangleCount = 0L; var texturedTriangleCount = 0L; var materialCount = 0; var excludedLods = 0; var maskedTintMaterials = 0;
         for (var i = 0; i < nodes.Length; i++)
         {
             Console.WriteLine($"Render chunk {i + 1}/{nodes.Length}: {nodes[i]} ({timer.Elapsed.TotalSeconds:F1} s)");
@@ -145,8 +146,32 @@ internal static class RenderExport
                             ["opacity"] = source.Opacity, ["uv"] = UvSettings(source, source.Shader.Contains("environment") ? "1" : ""),
                             ["layers"] = new JsonArray() } };
                     if (source.Texture == null) continue;
-                    int AddTexture(string texturePath, bool keepAlpha) {
-                    var key = texturePath + "|" + keepAlpha;
+                    var pbr = material["pbrMetallicRoughness"]!.AsObject();
+                    var factor = pbr["baseColorFactor"]?.AsArray();
+                    var exportedTint = factor == null ? Vector3.One : new Vector3(factor[0]!.GetValue<float>(), factor[1]!.GetValue<float>(), factor[2]!.GetValue<float>());
+                    var tint4 = source.Vectors.GetValueOrDefault("g_vColorTint", Vector4.One);
+                    var materialSrgb = new Vector3(tint4.X, tint4.Y, tint4.Z);
+                    var materialLinear = RenderTint.Linear(materialSrgb);
+                    var amount = source.Floats.GetValueOrDefault("g_flModelTintAmount", 1f);
+                    var modelTint = RenderTint.RecoverModelTint(exportedTint, materialSrgb, amount);
+                    // Correct the destructive zero-tint case. Other tints retain the POC's
+                    // per-instance approximation: baking every color variant quadruples texture memory.
+                    var bakeTint = source.Shader is "csgo_environment.vfx" or "csgo_environment_blend.vfx" &&
+                        exportedTint.LengthSquared() < 1e-12f &&
+                        Vector3.DistanceSquared(exportedTint, materialLinear) > 1e-10f;
+                    // Do not guess absent mask data. Keep the prior approximation for unsupported materials.
+                    if (bakeTint && Enumerable.Range(1, source.Layers.Length + 1).Any(layer =>
+                        source.Integers.GetValueOrDefault($"g_bModelTint{layer}", 1) != 0 && !source.Textures.ContainsKey($"g_tHeight{layer}"))) {
+                        warnings.Add("Masked model tint lacks a layer height texture: " + source.Path); bakeTint = false;
+                    }
+                    int AddTexture(string texturePath, bool keepAlpha, int layer = 1) {
+                    var maskPath = bakeTint ? source.Textures.GetValueOrDefault($"g_tHeight{layer}") : null;
+                    var enabled = source.Integers.GetValueOrDefault($"g_bModelTint{layer}", 1) != 0;
+                    var contrast = source.Floats.GetValueOrDefault($"g_fTintMaskContrast{layer}", 1f);
+                    var brightness = source.Floats.GetValueOrDefault($"g_fTintMaskBrightness{layer}", 1f);
+                    var key = texturePath + "|" + keepAlpha + (bakeTint ? JsonSerializer.Serialize(new object?[] {
+                        "masked-model-tint-v1", maskPath, enabled, contrast, brightness, amount,
+                        new[] { modelTint.X, modelTint.Y, modelTint.Z, materialLinear.X, materialLinear.Y, materialLinear.Z } }) : "");
                     if (!textures.TryGetValue(key, out var texture))
                     {
                         using var resource = rawLoader.LoadFileCompiled(texturePath);
@@ -157,6 +182,15 @@ internal static class RenderExport
                         var level = 0u;
                         while (level + 1 < data.NumMipLevels && Math.Max(data.Width >> (int)level, data.Height >> (int)level) > TextureSize) level++;
                         using var bitmap = data.GenerateBitmap(mipLevel: level);
+                        if (bakeTint) {
+                            using var maskResource = enabled && maskPath != null ? rawLoader.LoadFileCompiled(maskPath) : null;
+                            var maskData = maskResource?.DataBlock as Texture;
+                            if (enabled && maskData == null) throw new InvalidDataException("Missing tint mask: " + maskPath);
+                            var maskLevel = 0u;
+                            if (maskData != null) while (maskLevel + 1 < maskData.NumMipLevels && Math.Max(maskData.Width >> (int)maskLevel, maskData.Height >> (int)maskLevel) > TextureSize) maskLevel++;
+                            using var maskBitmap = maskData?.GenerateBitmap(mipLevel: maskLevel);
+                            BakeMaskedTint(bitmap, maskBitmap, modelTint, materialLinear, enabled ? amount : 0, contrast, brightness);
+                        }
                         // Color alpha often encodes reflectance rather than transparency.
                         // Keep it only when the material actually requests alpha blend/test.
                         if (!keepAlpha)
@@ -179,10 +213,15 @@ internal static class RenderExport
                     return index;
                     }
                     var index = AddTexture(source.Texture, source.KeepAlpha);
-                    material["pbrMetallicRoughness"]!["baseColorTexture"] = new JsonObject { ["index"] = index };
+                    pbr["baseColorTexture"] = new JsonObject { ["index"] = index };
                     foreach (var (layer, layerIndex) in source.Layers.Select((path, index) => (path, index)))
                         material["extras"]!["cs2"]!["layers"]!.AsArray().Add(new JsonObject {
-                            ["texture"] = AddTexture(layer, false), ["uv"] = UvSettings(source, (layerIndex + 2).ToString()) });
+                            ["texture"] = AddTexture(layer, false, layerIndex + 2), ["uv"] = UvSettings(source, (layerIndex + 2).ToString()) });
+                    if (bakeTint) {
+                        pbr["baseColorFactor"] = new JsonArray(1f, 1f, 1f, factor?[3]?.GetValue<float>() ?? 1f);
+                        material["extras"]!["cs2"]!["modelTintBaked"] = true;
+                        maskedTintMaterials++;
+                    }
                 }
             }
             gltf["images"] = images; gltf["textures"] = gltfTextures;
@@ -236,17 +275,43 @@ internal static class RenderExport
             schema = 1, map = "de_inferno", fingerprint, collisionFingerprint, preparedAt = DateTime.UtcNow,
             prepareMs = timer.Elapsed.TotalMilliseconds, chunks, gltfToSource, textureMaxSize = TextureSize,
             meshCount, primitives, triangleCount, texturedTriangleCount, materialCount, excludedLods, textureCount = textures.Count,
-            textureBytes = textures.Values.Sum(t => t.Bytes),
+            maskedTintMaterials, textureBytes = textures.Values.Sum(t => t.Bytes),
             estimatedTextureGpuBytes = textures.Values.Sum(t => (long)t.Width * t.Height * 4 * 4 / 3),
             totalBytes = files.Sum(f => f.bytes), files,
             warnings = warnings.Concat(new[] {
                 "Render geometry is for display only; separate vphys data drives shots and walking.",
                 "Base-color layers use vertex weights; height-based layer blending, normal/roughness maps, baked lighting and full Source shader parity omitted.",
+                "Otherwise-black environment instance tints are baked through per-layer height-green masks at capped mip resolution; other model tints and color correction remain approximations.",
                 "Static world-node models only; entity-driven doors, breakables, movable props, skybox and live state omitted."
             }),
         };
         File.WriteAllText(manifest + ".tmp", JsonSerializer.Serialize(metadata)); File.Move(manifest + ".tmp", manifest, true);
         Console.WriteLine($"Textured Inferno: {triangleCount:N0} triangles, {primitives:N0} primitives, {textures.Count} base textures; {files.Sum(f => f.bytes) / 1048576.0:F1} MiB disk, {metadata.estimatedTextureGpuBytes / 1048576.0:F1} MiB estimated texture GPU; {timer.Elapsed.TotalSeconds:F2} s.");
+    }
+
+    private static void BakeMaskedTint(SKBitmap color, SKBitmap? mask, Vector3 modelTint, Vector3 materialTint, float amount, float contrast, float brightness)
+    {
+        var pixels = color.Pixels;
+        var maskPixels = mask?.Pixels;
+        float Green(int x, int y) => mask == null ? 0 : maskPixels![((y % mask.Height + mask.Height) % mask.Height) * mask.Width + (x % mask.Width + mask.Width) % mask.Width].Green / 255f;
+        for (var y = 0; y < color.Height; y++) for (var x = 0; x < color.Width; x++) {
+            var weight = 0f;
+            if (mask != null) {
+                // Same normalized UVs, repeat wrapping and bilinear mask sampling, even if mip sizes differ.
+                var mx = (x + 0.5f) * mask.Width / color.Width - 0.5f;
+                var my = (y + 0.5f) * mask.Height / color.Height - 0.5f;
+                var ix = (int)MathF.Floor(mx); var iy = (int)MathF.Floor(my);
+                var top = float.Lerp(Green(ix, iy), Green(ix + 1, iy), mx - ix);
+                var bottom = float.Lerp(Green(ix, iy + 1), Green(ix + 1, iy + 1), mx - ix);
+                weight = RenderTint.Mask(float.Lerp(top, bottom, my - iy), contrast, brightness);
+            }
+            var index = y * color.Width + x;
+            var pixel = pixels[index];
+            var linear = RenderTint.Linear(new Vector3(pixel.Red, pixel.Green, pixel.Blue) / 255f);
+            var result = RenderTint.Srgb(RenderTint.Apply(linear, modelTint, amount, weight) * materialTint) * 255f;
+            pixels[index] = new SKColor((byte)Math.Clamp((int)MathF.Round(result.X), 0, 255), (byte)Math.Clamp((int)MathF.Round(result.Y), 0, 255), (byte)Math.Clamp((int)MathF.Round(result.Z), 0, 255), pixel.Alpha);
+        }
+        color.Pixels = pixels;
     }
 
     private static bool HasVrfOverlayOffset(MaterialInfo material) =>

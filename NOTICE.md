@@ -52,6 +52,10 @@ source distribution.
 The optional CS2 textured-map preparation also uses meshoptimizer 1.3.0 (MIT)
 for lossless geometry compression and Three.js's bundled Meshopt decoder for
 local rendering. Its notice is retained in `licenses/MESHOPTIMIZER-LICENSE.txt`.
+The importer’s masked model-tint math follows VRF’s MIT-licensed
+`Renderer/Shaders/csgo_environment.vert.slang` and `csgo_environment.frag.slang`;
+the VRF license above also covers that reference. No Valve engine shader source
+is included.
 The shared browser shell also distributes the BVH and Meshopt notices under
 `web/public/licenses/`; its matching source archive includes the imported
 Three.js loader/decoder and BVH sources. Prepared game content is excluded.

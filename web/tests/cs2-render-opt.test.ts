@@ -242,6 +242,40 @@ it.skipIf(!existsSync(path))(
   },
 );
 it.skipIf(!existsSync(path))(
+  'actual Inferno barrel-side plywood uses masked tint instead of a uniform black multiplier',
+  () => {
+    const gltf = JSON.parse(readFileSync(path, 'utf8'));
+    const panel = gltf.meshes.find(
+      (mesh: { name: string }) =>
+        mesh.name === 'n0_lr0_agg_merge_inferno_trim_plywood01_plywood02_blend_0_fragment18',
+    );
+    expect(panel).toBeDefined();
+    const material = gltf.materials[panel.primitives[0].material];
+    expect(material.extras.sourceMaterial).toBe(
+      'materials/de_inferno/trim/inferno_trim_plywood01_plywood02_blend.vmat_c',
+    );
+    expect(material.extras.cs2.modelTintBaked).toBe(true);
+    expect(material.pbrMetallicRoughness.baseColorFactor).toEqual([1, 1, 1, 1]);
+    expect(material.extras.cs2.layers).toHaveLength(1);
+    const plain = gltf.materials.find(
+      (m: { name: string; extras: { cs2: Cs2Material } }) =>
+        m.name === material.name && !m.extras.cs2.modelTintBaked,
+    );
+    const textureFile = (m: typeof material) =>
+      gltf.images[gltf.textures[m.pbrMetallicRoughness.baseColorTexture.index].source].uri;
+    expect(textureFile(material)).not.toBe(textureFile(plain));
+    const metadata = JSON.parse(
+      readFileSync(
+        fileURLToPath(new URL('../../.local/cs2/de_inferno/render.json', import.meta.url)),
+        'utf8',
+      ),
+    );
+    // Keep ordinary colors as batched instance tints, rather than baking hundreds of variants.
+    expect(metadata.maskedTintMaterials).toBeGreaterThan(0);
+    expect(metadata.estimatedTextureGpuBytes).toBeLessThan(350 * 1048576);
+  },
+);
+it.skipIf(!existsSync(path))(
   'actual Inferno decals retain alpha and painted layers retain weights',
   () => {
     const gltf = JSON.parse(readFileSync(path, 'utf8'));

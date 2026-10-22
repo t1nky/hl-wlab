@@ -24,6 +24,7 @@
     "cs2:prepare:render": "bun tools/cs2-prepare.mjs --render",
     "cs2:dev": "bun --bun vite --config web/cs2/vite.config.ts",
     "cs2:check": "tsc --noEmit -p web/cs2/tsconfig.json && bun --bun vite build --config web/cs2/vite.config.ts",
+    "cs2:test:importer": "dotnet run --project tools/cs2-import-tests/Tests.csproj",
     "cs2:smoke": "bun tools/cs2-smoke.mjs"
   },
   "dependencies": {

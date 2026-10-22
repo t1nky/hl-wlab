@@ -57,6 +57,19 @@ was launched; game penetration/damage validation is still outstanding.
 
 ## Standalone diagnostic entry
 
+The barrel-side plywood near Source `(440.11, 2051.67, 172.72)` had an exported
+black instance tint applied uniformly. The game masks that tint using each
+layer's height texture green channel. The importer now bakes this otherwise-black
+case into the capped local base textures and removes the uniform multiplier;
+ordinary colored tints retain the existing batched approximation. Refresh the
+appearance cache with `bun run cs2:prepare --render`. Pure math regression tests
+run with `bun run cs2:test:importer`; they require .NET 10, no game files.
+The refreshed installed-map package has 258 textures, 308.3 MiB estimated texture
+GPU storage and two corrected material variants, with unchanged render/collision
+geometry. Local conversion plus lossless packing took 48.1 s. The same plywood
+is visible with its grain in `.local/cs2/qa/plywood-after.png`; screenshots and
+all prepared assets remain ignored. Browser application/GL error counts were zero.
+
 From this repository (`C:\Users\kyler\Projects\hl-wlab`, resolving to
 `D:\Projects\hl-wlab`), with Bun and the .NET 10 SDK installed:
 
