@@ -25,6 +25,7 @@ export interface Cs2Material {
   shader: string;
   blendMode: number;
   opacity: number;
+  depthBias?: boolean;
   uv: UvSettings;
   layers: { texture: number; uv: UvSettings }[];
 }
@@ -91,7 +92,7 @@ export function diffuseMaterial(
     material.blendDst =
       mode === 4 ? OneFactor : mode === 6 ? OneMinusSrcAlphaFactor : SrcColorFactor;
   }
-  if (settings?.shader.includes('overlay')) {
+  if (settings?.depthBias || settings?.shader.includes('overlay')) {
     material.polygonOffset = true;
     material.polygonOffsetFactor = -1;
     material.polygonOffsetUnits = -1;

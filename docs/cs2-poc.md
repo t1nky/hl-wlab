@@ -129,14 +129,15 @@ transform-index shifts when a fragment is omitted. These are render-only changes
 
 After the rendering fixes, Inferno contains **8,323,289 render triangles** in
 6,559 primitives, with 255 unique color textures. Preparation excludes 51 redundant
-aggregate LOD meshes and tools-only primitives. The package is **290.7 MiB**;
+aggregate LOD meshes and tools-only primitives. The package is **290.8 MiB**;
 decoded geometry is 410.0 MiB, and estimated texture GPU storage is 304.3 MiB, in
 addition to collision, GPU batch textures and browser overhead. Extra paint/layer
 data makes this larger than the earlier first-layer-only package. Final preparation
-took 48.41 s including packing/compression; cached render/collision checks took
-5/102 ms. An earlier export peaked at 4.34 GiB; the final export peak was not sampled.
+took 49.68 s including packing/compression; cached render/collision checks took
+5/103 ms. An earlier export peaked at 4.34 GiB; the final export peak was not sampled.
 
-At a fixed T-spawn eye `-1586.52 440.79 0.025` looking toward
+At rendering-optimization revision `647f8a7`, a fixed T-spawn eye
+`-1586.52 440.79 0.025` looking toward
 `-1520.06 430.891 2`, T3's SwiftShader preview at 1440×1000 measured:
 
 | Rendering | Draw calls | Triangles | Median render sample |
@@ -156,8 +157,31 @@ Current private review artifacts are `.local/cs2/qa/render-fixed-walk.png` and
 `render-performance.json`. Browser QA found no runtime errors or failed requests,
 and the surface inspector resolved a floor material at `-1545.89 493.62 -64.00`.
 The plaster ray still reports 19.2495 units and 42.9994 surrogate damage in both
-display modes. Specific remaining floating surfaces require their coordinates;
-the current shader subset and omitted entity models can still limit appearance.
+display modes. The current shader subset and omitted entity models can still
+limit appearance.
+
+### Floating arch overlays
+
+The user's T-spawn arch screenshot isolated actual decal displacement. Pinned
+VRF 20.1.7467 bakes positions into metres, then its glTF exporter adds
+`normal * (0.01 / 0.0254)` to overlay positions. That is about 0.3937 metres,
+or **15.5 Source units**. Independent extraction of the installed VBIBs confirmed
+both `overlay12` (dirt) and `overlay31` (leaves) have ground vertices at **Z=-64**;
+the previous export put them at **Z=-48.5**.
+
+Preparation records which materials trigger this exact pinned-exporter behavior
+and removes its displacement from owned, compacted positions in local glTF space,
+before instance transforms. It restores the original geometry rather than snapping
+to a guessed floor. GPU polygon offset provides depth bias without lifting the
+decal. All 263 affected primitives are corrected; unrelated geometry is unchanged.
+Reassess this workaround before upgrading VRF. No collision data is modified.
+
+A synthetic regression checks oblique normals and rotated/nonuniformly scaled
+instances. The actual-map regression failed with the old export and now matches
+the original dirt/leaf min/max bounds within 0.005 Source units on all axes.
+Repeatable browser view: eye `-1270 320 0.025`, looking toward `-1130 151 -64`.
+Private evidence: `.local/cs2/qa/overlay-original-vertices.json`,
+`arch-overlay-before.png` and `arch-overlay-after.png`.
 
 Prepared data is under ignored `.local/cs2/de_inferno/`: `map.json` plus a 68.8 MiB
 indexed binary `map.cs2map` (1,496,696 vertices; 2,709,353 triangles). Metadata
@@ -214,7 +238,7 @@ bun run cs2:smoke             # actual local map + warm trace timing report
 bun run check:repo            # audit staged index before committing
 ```
 
-Verified October 22, 2026: **103 tests passed, 9 existing private-fixture skips**.
+Verified October 22, 2026: **105 tests passed, 9 existing private-fixture skips**.
 Collision checks cover synthetic closed meshes/hulls, oblique thickness,
 start/target-inside, misses, collision filtering, transformed planes, triangle
 material/shape identity through BVH traversal, unclosed/conflicting meshes,

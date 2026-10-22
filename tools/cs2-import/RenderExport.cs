@@ -135,6 +135,10 @@ internal static class RenderExport
                     if (source.BlendMode == 2) material["alphaCutoff"] = source.AlphaCutoff;
                     material["extras"] = new JsonObject { ["sourceMaterial"] = source.Path, ["tools"] = source.Tools,
                         ["cs2"] = new JsonObject { ["shader"] = source.Shader, ["blendMode"] = source.BlendMode,
+                            // VRF 20.1 adds this displacement after converting vertices to metres.
+                            // Restore original positions during packing; browser depth bias handles z-fighting.
+                            ["vrfOverlayOffsetMetres"] = HasVrfOverlayOffset(source) ? 0.01f / 0.0254f : 0f,
+                            ["depthBias"] = HasVrfOverlayOffset(source),
                             ["vertexPaint"] = source.Shader.Contains("foliage") ? "none" : source.Shader.Contains("environment") ? "environment" :
                                 source.Integers.GetValueOrDefault("F_PAINT_VERTEX_COLORS") > 0 || source.Integers.GetValueOrDefault("F_VERTEX_COLOR") > 0 ?
                                 source.Shader.Contains("static_overlay") ? "overlay" : "srgb" : "none",
@@ -244,6 +248,13 @@ internal static class RenderExport
         File.WriteAllText(manifest + ".tmp", JsonSerializer.Serialize(metadata)); File.Move(manifest + ".tmp", manifest, true);
         Console.WriteLine($"Textured Inferno: {triangleCount:N0} triangles, {primitives:N0} primitives, {textures.Count} base textures; {files.Sum(f => f.bytes) / 1048576.0:F1} MiB disk, {metadata.estimatedTextureGpuBytes / 1048576.0:F1} MiB estimated texture GPU; {timer.Elapsed.TotalSeconds:F2} s.");
     }
+
+    private static bool HasVrfOverlayOffset(MaterialInfo material) =>
+        material.Integers.GetValueOrDefault("F_OVERLAY") == 1 ||
+        material.Integers.GetValueOrDefault("F_DEPTHBIAS") == 1 ||
+        material.Integers.GetValueOrDefault("F_DEPTH_BIAS") == 1 ||
+        material.Shader.EndsWith("static_overlay.vfx", StringComparison.Ordinal) ||
+        material.Shader == "citadel_overlay.vfx";
 
     // VRF's glTF exporter currently emits all aggregate LoDs; its renderer selects only
     // the lowest present mask bit. Filter after export, so skipped fragments still consume

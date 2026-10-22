@@ -6,6 +6,17 @@ import { resolve, sep } from 'node:path';
 const dimensions = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 };
 const formats = { 5121: Uint8Array, 5123: Uint16Array, 5125: Uint32Array, 5126: Float32Array };
 
+/** Undo the pinned VRF exporter's local-space overlay lift, before instance transforms.
+ * @param {Float32Array} positions Owned, compacted positions in glTF metres.
+ * @param {Float32Array} normals The same local normals VRF used (do not renormalize).
+ * @param {number} offsetMetres Exact displacement recorded by the pinned converter.
+ */
+export function restoreOverlayPositions(positions, normals, offsetMetres) {
+  if (!Number.isFinite(offsetMetres) || offsetMetres < 0 || positions.length !== normals.length)
+    throw Error('Invalid overlay displacement correction');
+  for (let i = 0; i < positions.length; i++) positions[i] -= normals[i] * offsetMetres;
+}
+
 export function compactPrimitive(attributes, originalIndices, paintMode = 'environment') {
   const used = [];
   const remap = new Map();
@@ -83,7 +94,8 @@ export function packRenderGeometry(gltf, folder, basename) {
   const handle = openSync(resolve(folder, file), 'w');
   let offset = 0,
     vertices = 0,
-    triangles = 0;
+    triangles = 0,
+    restoredOverlays = 0;
   function writeAccessor(attribute, name = '') {
     const { array, size, normalized } = attribute;
     while (offset % 4) {
@@ -132,6 +144,14 @@ export function packRenderGeometry(gltf, folder, basename) {
           readAccessor(primitive.indices).array,
           settings?.vertexPaint ?? 'none',
         );
+        if (settings?.vrfOverlayOffsetMetres > 0) {
+          const positions = compact.attributes.POSITION.array;
+          const normals = compact.attributes.NORMAL?.array;
+          if (!(positions instanceof Float32Array) || !(normals instanceof Float32Array))
+            throw Error('Overlay correction requires float positions and normals');
+          restoreOverlayPositions(positions, normals, settings.vrfOverlayOffsetMetres);
+          restoredOverlays++;
+        }
         if (compact.attributes.COLOR_0?.array.every((value) => value === 1))
           delete compact.attributes.COLOR_0;
         primitive.attributes = Object.fromEntries(
@@ -151,5 +171,5 @@ export function packRenderGeometry(gltf, folder, basename) {
   gltf.bufferViews = views;
   gltf.buffers = [{ uri: file, byteLength: offset }];
   for (const buffer of buffers) unlinkSync(buffer.path);
-  return { vertices, triangles, bytes: offset };
+  return { vertices, triangles, bytes: offset, restoredOverlays };
 }
