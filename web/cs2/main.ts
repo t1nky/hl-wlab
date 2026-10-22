@@ -229,8 +229,11 @@ function renderShot(shot: Shot) {
   )) {
     const row = table.insertRow();
     row.insertCell().textContent = `${meta.materials[c.material].name} / ${c.material}`;
-    row.insertCell().textContent = `Contact ${c.distance.toFixed(1)}; exit unresolved`;
-    row.insertCell().textContent = 'Unknown';
+    const sky = meta.shapes[c.shape].tags.includes('sky');
+    row.insertCell().textContent = sky
+      ? `Sky boundary ${c.distance.toFixed(1)}`
+      : `Contact ${c.distance.toFixed(1)}; exit unresolved`;
+    row.insertCell().textContent = sky ? 'Boundary' : 'Unknown';
   }
   result.append(table);
   for (const issue of shot.issues) {
@@ -243,7 +246,7 @@ function renderShot(shot: Shot) {
   const pitch = (-Math.atan2(v.z, Math.hypot(v.x, v.y)) * 180) / Math.PI,
     yaw = (Math.atan2(v.y, v.x) * 180) / Math.PI;
   element('commands').textContent =
-    `map de_inferno\nsv_cheats 1\nbot_kick\ngive weapon_awp\nsv_showimpacts 1\nsetpos ${shot.source[0].toFixed(3)} ${shot.source[1].toFixed(3)} ${(shot.source[2] - 64).toFixed(3)}\nsetang ${pitch.toFixed(4)} ${yaw.toFixed(4)} 0\n// Target point: ${shot.target.map((n) => n.toFixed(3)).join(' ')}\n// Fire once manually; record actual impact/penetration.\n// No posed target damage has been validated.`;
+    `map de_inferno\nsv_cheats 1\nbot_kick\ngive weapon_awp\nsv_showimpacts 1\nsv_showimpacts_penetration 1\nsv_showimpacts_time 10\nsetpos ${shot.source[0].toFixed(3)} ${shot.source[1].toFixed(3)} ${(shot.source[2] - 64).toFixed(3)}\nsetang ${pitch.toFixed(4)} ${yaw.toFixed(4)} 0\n// Target point: ${shot.target.map((n) => n.toFixed(3)).join(' ')}\n// Fire once manually; record actual impact/penetration.\n// No posed target damage has been validated.`;
 }
 async function trace(source = coordinates('source'), target = coordinates('target')) {
   if (currentShot?.target.some((v, i) => Math.abs(v - target[i]) > 0.01)) clearScan();

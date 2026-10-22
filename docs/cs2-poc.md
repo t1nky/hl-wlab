@@ -118,8 +118,8 @@ bun run cs2:smoke             # actual local map + warm trace timing report
 bun run check:repo            # audit staged index before committing
 ```
 
-Verified October 22, 2026: **77 tests passed, 9 existing private-fixture skips**.
-The 14 new checks cover synthetic closed meshes/hulls, oblique thickness,
+Verified October 22, 2026: **78 tests passed, 9 existing private-fixture skips**.
+The 15 new checks cover synthetic closed meshes/hulls, oblique thickness,
 start/target-inside, misses, collision filtering, transformed planes, triangle
 material/shape identity through BVH traversal, unclosed/conflicting meshes,
 overlap union, damage falloff/budget/unknowns, malformed input, and a private
@@ -136,6 +136,48 @@ p95 0.143 ms after construction. A browser 625-cell scan took 132 ms, retaining
 296 candidates: 94 clear, 15 estimated penetration, 34 blocked, 153 indeterminate.
 Cancel was verified after one 25-cell row. T3 preview verified numeric tracing,
 floor picking, framing, scan/cancel and cached reload without console errors.
+
+### Reported plaster shot regression
+
+Source eye `77.46 1227.80 156.90`, target `457.28 1846.20 184.00` exposed a
+false start-inside result: the first forward intersection with a sky-tagged mesh
+was a backface 2,980 units away, beyond the target. Treating sky as a closed solid
+created an enormous default-material interval that hid the actual wall.
+Sky is now handled as a boundary: it blocks only when the shot crosses that
+boundary before the target, without claiming any solid volume or thickness.
+Regression tests cover an origin inside sky, actual boundary crossings, and this
+installed-map shot in both directions. Ordinary closed-mesh/hull start-inside
+detection remains enabled.
+
+The corrected ray reports plaster ID 32, entry distance **670.201**, exit
+**689.451**, physical thickness **19.250** units, and **43.0 surrogate damage**.
+Forward/reverse wall thickness and surrogate damage agree. Raw entry position is
+`427.975 1798.487 181.909`; exit is `438.042 1814.878 182.627`.
+This confirms the POC geometry bug, not exact in-game damage.
+
+To compare on the user's existing offline Inferno server, equip the AWP, stand
+without crouching, and use:
+
+```text
+sv_cheats 1
+sv_showimpacts 1
+sv_showimpacts_penetration 1
+sv_showimpacts_time 10
+weapon_accuracy_nospread 1
+setpos_exact 77.460 1227.800 92.900
+setang -2.1385 58.4418 0
+getpos_exact
+```
+
+Fire once manually. Compare the server's entry/exit impacts with the positions
+above; record penetration debug output before comparing any posed-player damage.
+If gravity/collision relocates the player, capture the actual `getpos_exact`
+result and repeat the browser ray from that position with the standing eye
+offset. Restore `weapon_accuracy_nospread 0` after this controlled comparison.
+The [extracted command reference](https://s2v.app/SchemaExplorer/cs2/convars)
+documents these debug/position commands. No game-session commands were executed
+by the POC or agent. Local before/after reports and screenshot are in
+`.local/cs2/qa/reported-shot-*`.
 
 Actual-map simulator examples (Source coordinates; damage is surrogate-only):
 

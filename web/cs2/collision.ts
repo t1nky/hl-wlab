@@ -228,8 +228,16 @@ export class CollisionMap {
     }
     const spans: Span[] = [],
       issues: string[] = [];
+    let crossesSky = false;
     for (const [id, crossings] of candidates) {
       const shape = this.metadata.shapes[id];
+      // Sky encloses playable space with inward-facing/open boundary surfaces.
+      // A distant backface is not evidence that the source is inside solid matter.
+      // Only an actual boundary crossing before the target blocks this shot.
+      if (shape.tags.includes('sky')) {
+        crossesSky ||= crossings.some((hit) => hit.distance <= distance);
+        continue;
+      }
       if (shape.kind === 'hull') {
         const interval = hullSpan(shape.planes, origin, direction, distance);
         if (interval)
@@ -257,7 +265,9 @@ export class CollisionMap {
       spans: merged,
       contacts,
       issues,
-      ...estimate(merged, distance, this.metadata, issues),
+      ...(crossesSky
+        ? { damage: 0, status: 'blocked' as const }
+        : estimate(merged, distance, this.metadata, issues)),
       ms: performance.now() - start,
     };
   }

@@ -100,6 +100,18 @@ describe('CS2 collision and explicit surrogate', () => {
     expect(map.standable([15, 0, 0])).toBe(false);
     map.dispose();
   });
+  it('treats sky as a boundary, never as a containing solid', () => {
+    const { map, meta } = fixture();
+    meta.shapes[0].tags = ['sky'];
+    // First forward intersection is a backface, beyond the nearby target.
+    expect(map.trace([15, 0, 0], [16, 0, 0]).status).toBe('clear');
+    expect(map.trace([15, 0, 0], [16, 0, 0]).spans).toEqual([]);
+    // Boundary crossings still block, from either direction.
+    expect(map.trace([15, 0, 0], [30, 0, 0]).status).toBe('blocked');
+    expect(map.trace([0, 0, 0], [15, 0, 0]).status).toBe('blocked');
+    expect(map.trace([15, 0, 0], [0, 0, 0]).contacts.length).toBeGreaterThan(0);
+    map.dispose();
+  });
   it('keeps per-triangle surface and shape IDs through indirect BVH traversal', () => {
     const { map: first, meta } = fixture();
     const a = first.data;
@@ -246,6 +258,24 @@ it.skipIf(!existsSync(`${local}map.json`))(
     expect(wood.status).toBe('estimated-penetration');
     expect(meta.materials[wood.spans[0].material].name).toBe('wood');
     expect(wood.spans[0].exit - wood.spans[0].enter).toBeCloseTo(3.5, 2);
+    // User-reported false start-solid: a remote inward sky face used to hide
+    // this valid wall interval. Forward/reverse physical thickness must agree.
+    const source: [number, number, number] = [77.46, 1227.8, 156.9];
+    const target: [number, number, number] = [457.28, 1846.2, 184];
+    const plaster = map.trace(source, target);
+    const reverse = map.trace(target, source);
+    expect(plaster.status).toBe('estimated-penetration');
+    expect(plaster.issues).toEqual([]);
+    expect(plaster.spans).toHaveLength(1);
+    expect(meta.materials[plaster.spans[0].material].name).toBe('plaster');
+    expect(plaster.spans[0].enter).toBeCloseTo(670.2012, 3);
+    expect(plaster.spans[0].exit).toBeCloseTo(689.4508, 3);
+    expect(plaster.spans[0].startInside).toBe(false);
+    expect(plaster.spans[0].exit - plaster.spans[0].enter).toBeCloseTo(
+      reverse.spans[0].exit - reverse.spans[0].enter,
+      5,
+    );
+    expect(plaster.damage).toBeCloseTo(reverse.damage ?? -1, 5);
     console.log(
       JSON.stringify({ map: meta.map, triangles: meta.triangleCount, buildMs, clear, wall }),
     );
