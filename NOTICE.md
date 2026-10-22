@@ -41,7 +41,7 @@ program and its build tooling, not imported proprietary content. Attribution
 and an unofficial-project notice do not grant permission to redistribute game
 assets or use Valve branding.
 
-The isolated CS2 experiment uses ValveResourceFormat 20.1.7467 (MIT) for local
+The experimental CS2 backend uses ValveResourceFormat 20.1.7467 (MIT) for local
 VPK/resource/physics parsing and three-mesh-bvh 0.9.8 (MIT) for browser ray
 acceleration. Their notices are in `licenses/VRF-LICENSE.txt` and
 `licenses/THREE-MESH-BVH-LICENSE.txt`. No Valve engine source or
@@ -52,6 +52,9 @@ source distribution.
 The optional CS2 textured-map preparation also uses meshoptimizer 1.3.0 (MIT)
 for lossless geometry compression and Three.js's bundled Meshopt decoder for
 local rendering. Its notice is retained in `licenses/MESHOPTIMIZER-LICENSE.txt`.
+The shared browser shell also distributes the BVH and Meshopt notices under
+`web/public/licenses/`; its matching source archive includes the imported
+Three.js loader/decoder and BVH sources. Prepared game content is excluded.
 
 References:
 

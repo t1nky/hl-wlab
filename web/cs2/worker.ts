@@ -5,7 +5,7 @@ import { WalkController, type WalkInput } from './movement';
 import { decodeMap, type Metadata, type V3 } from './types';
 
 type Request = { id: number } & (
-  | { op: 'load' }
+  | { op: 'load'; includeBuffer?: boolean }
   | { op: 'trace'; source: V3; target: V3 }
   | { op: 'pick'; source: V3; direction: V3; maxZ: number }
   | { op: 'scan'; target: V3 }
@@ -68,7 +68,7 @@ async function saveCache(key: string, bvh: SerializedBVH) {
     db.close();
   }
 }
-async function load(id: number) {
+async function load(id: number, includeBuffer = true) {
   const start = performance.now();
   const response = await fetch('/local/map.json');
   if (!response.ok) throw Error('Prepare the installed map first: bun run cs2:prepare');
@@ -101,7 +101,7 @@ async function load(id: number) {
       /* Quota/private browsing must not prevent tracing. */
     }
   }
-  const render = buffer.slice(0);
+  const render = includeBuffer ? buffer.slice(0) : undefined;
   scope.postMessage(
     {
       id,
@@ -113,7 +113,7 @@ async function load(id: number) {
       cached: !!cached,
       cacheSaved,
     },
-    [render],
+    render ? [render] : [],
   );
 }
 async function scan(id: number, target: V3) {
@@ -161,7 +161,7 @@ scope.onmessage = async ({ data }) => {
   try {
     switch (data.op) {
       case 'load':
-        await load(data.id);
+        await load(data.id, data.includeBuffer);
         break;
       case 'trace':
         send(data.id, { kind: 'shot', shot: map.trace(data.source, data.target) });

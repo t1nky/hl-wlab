@@ -1,0 +1,20 @@
+:root[data-game="cs2"] [data-game-only="goldsrc"],
+:root:not([data-game="cs2"]) [data-game-only="cs2"] {
+  display: none;
+}
+header .game-mode {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+}
+header .game-mode lab-select {
+  min-width: 135px;
+}
+#cs2Shot {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}

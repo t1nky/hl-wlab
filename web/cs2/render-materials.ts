@@ -83,7 +83,11 @@ export function diffuseMaterial(
     depthWrite: !source.transparent,
   });
   material.name = source.name;
-  material.userData = { ...source.userData, cs2Textures: layerTextures };
+  material.userData = {
+    ...source.userData,
+    cs2Textures: layerTextures,
+    cs2TexturesEnabled: { value: 1 },
+  };
   const mode = settings?.blendMode ?? 0;
   if (mode >= 3) {
     material.blending = CustomBlending;
@@ -101,9 +105,10 @@ export function diffuseMaterial(
   if (settings.layers.some((layer) => layer.uv.channel === 1)) material.defines = { USE_UV1: '' };
   for (const texture of layerTextures) texture.colorSpace = SRGBColorSpace;
   material.onBeforeCompile = (shader) => {
+    shader.uniforms.cs2TexturesEnabled = material.userData.cs2TexturesEnabled;
     const layers = settings.layers.slice(0, layerTextures.length);
     shader.vertexShader = `attribute vec4 cs2Blend; varying vec4 vCs2Blend;\n${shader.vertexShader}`;
-    shader.fragmentShader = `varying vec4 vCs2Blend;\n${shader.fragmentShader}`;
+    shader.fragmentShader = `uniform float cs2TexturesEnabled; varying vec4 vCs2Blend;\n${shader.fragmentShader}`;
     let vertex = 'vCs2Blend = cs2Blend;\n';
     let fragment = '';
     layers.forEach((layer, i) => {
@@ -121,7 +126,7 @@ export function diffuseMaterial(
     );
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <map_fragment>',
-      `#include <map_fragment>\n${fragment}`,
+      `#include <map_fragment>\nif (cs2TexturesEnabled > 0.5) { ${fragment} }`,
     );
   };
   material.customProgramCacheKey = () =>

@@ -1,7 +1,61 @@
 # CS2 Inferno wallbang POC
 
-Experimental branch `cs2-poc`. Run locally; do not deploy the prepared map. The
-CS1.6 entry point, service worker, and production build inputs are unchanged.
+Experimental branch `cs2-poc`. Run locally; do not deploy the prepared map.
+This branch now runs CS1.6 and CS2 in the original application's shell. Main
+remains unchanged; no merge or deployment is performed.
+
+## Shared application (recommended)
+
+```powershell
+bun run cs2:prepare --render   # once, or after a game/map update
+bun run dev
+```
+
+Open **http://127.0.0.1:8768/?game=cs2**, or switch the header's **Game** selector
+between **CS 1.6** and **CS2 · experimental**. The default URL stays CS1.6.
+The original UI, Three.js renderer, orbit/fly camera, pointer lock, sensitivity,
+WASD, Space, Ctrl/C, Escape, F/Home, E placement, result selection and filters
+are shared. Only collision, map loading and shot simulation change with the game.
+CS2 walking retains a 2,000-unit draw distance and a capped pixel budget;
+orbit and fly keep the full-map range. The legacy CS1.6 physics is unchanged.
+
+In **Target**, edit target point X/Y/Z, and the source's eye X/Y/Z; click **Trace
+AWP**. **Source at camera** uses the current viewpoint. Walk + **E** places the
+stationary target at your eye; move away, then set source at camera and trace.
+The line marks the physical solid intervals, with entry/exit crosses and surface
+IDs/thickness in the inspector. Scan uses the existing scan button, stop button,
+point colors, filters and click-to-inspect UI, bounded to 625 grid cells (64-unit
+spacing, ±768 units) and standing shooters. **Stand here** starts collision-aware
+walking at the selected origin. An indeterminate ray is not counted as a wallbang;
+selecting it shows its uncertainty in the shot details.
+
+CS2 uses point targets and an approximate AWP residual-damage model. GoldSrc
+player poses, armor/hitgroup multiplication, weapon choices, bookmarks and scene
+import/export are hidden or disabled for CS2. Switching back restores CS1.6
+target/scan values and camera, disposes CS2 GPU resources, and terminates its
+physics worker. CS2 is lazy-loaded; CS1.6 never downloads the CS2 map or starts
+its worker. Local map routes are shared by the two development servers and
+allow only the prepared package; they are not present in a production build.
+
+The separation lives in `web/src/games/cs2.ts` (map, physics worker, scan/trace
+data and disposal), `games/navigation.ts` (async movement boundary) and
+`ui/game-mode.ts` (mode-specific controls/restoration). `main.ts` remains the
+original application's UI/control coordinator, with the GoldSrc engine intact.
+
+Shared-shell verification on the installed Inferno package: cached physics load
+396 ms / BVH restore 9.1 ms; the plaster regression traced in 0.7–0.9 ms with
+19.2495 units (48.9 cm) thickness and 42.9994 surrogate residual damage. The
+625-cell scan took 0.12–0.13 s, finding 99 standing origins: 30 clear, 7 estimated
+penetrating, 24 blocked, 38 indeterminate. These are local observations, not FPS
+or game-accuracy claims. Browser checks covered Ctrl and C crouch (64/46 eye
+height), rightward D movement, E placement, selecting/standing at a scanned
+origin, a pending walk/orbit change, and switching back to a real CS1.6 Inferno
+BSP. Target/scan values and camera restored, CS2 geometry was disposed and its
+worker rejected further requests, with no application errors or GL errors.
+CS1.6's bounded live scan returned 8 rows in 0.05 s. No new offline CS2 session
+was launched; game penetration/damage validation is still outstanding.
+
+## Standalone diagnostic entry
 
 From this repository (`C:\Users\kyler\Projects\hl-wlab`, resolving to
 `D:\Projects\hl-wlab`), with Bun and the .NET 10 SDK installed:
@@ -21,7 +75,7 @@ For another installation location:
 bun run cs2:prepare --game="D:\SteamLibrary\steamapps\common\Counter-Strike Global Offensive"
 ```
 
-The CS2 entry remains separate from the production CS1.6 app. **Textures** uses
+The standalone diagnostic page remains available. **Textures** uses
 the locally prepared render package; **Collision diagnostic** shows the physics
 surfaces. If render preparation is missing, collision view still works and the
 page shows the exact preparation command. `/?view=collision` skips texture loading.

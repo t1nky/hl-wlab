@@ -29,7 +29,7 @@ jobs:
       - name: Package matching source and dependency source
         run: |
           git archive --format=tar --output=web/dist/source.tar HEAD
-          tar --append --file=web/dist/source.tar node_modules/three/src node_modules/three/examples/jsm/controls/OrbitControls.js node_modules/three/LICENSE node_modules/three/package.json
+          tar --append --file=web/dist/source.tar node_modules/three/src node_modules/three/examples/jsm/controls/OrbitControls.js node_modules/three/examples/jsm/loaders/GLTFLoader.js node_modules/three/examples/jsm/utils/BufferGeometryUtils.js node_modules/three/examples/jsm/libs/meshopt_decoder.module.js node_modules/three/LICENSE node_modules/three/package.json node_modules/three-mesh-bvh/src node_modules/three-mesh-bvh/LICENSE node_modules/three-mesh-bvh/package.json
           gzip web/dist/source.tar
           git rev-parse HEAD > web/dist/revision.txt
       - run: bun tools/check-pages.mjs

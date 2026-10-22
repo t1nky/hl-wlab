@@ -4,6 +4,14 @@ function element<T extends HTMLElement>(id: string, type: { new (): T }): T {
   return node;
 }
 const elements = {
+  gameMode: element('gameMode', HTMLSelectElement),
+  cs2SourceX: element('cs2SourceX', HTMLInputElement),
+  cs2SourceY: element('cs2SourceY', HTMLInputElement),
+  cs2SourceZ: element('cs2SourceZ', HTMLInputElement),
+  cs2SourceCamera: element('cs2SourceCamera', HTMLButtonElement),
+  cs2TargetCamera: element('cs2TargetCamera', HTMLButtonElement),
+  cs2Trace: element('cs2Trace', HTMLButtonElement),
+  cs2Shot: element('cs2Shot', HTMLElement),
   gameFolder: element('gameFolder', HTMLButtonElement),
   gameDirectory: element('gameDirectory', HTMLInputElement),
   libraryMap: element('libraryMap', HTMLSelectElement),

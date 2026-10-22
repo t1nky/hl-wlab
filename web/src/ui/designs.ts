@@ -83,6 +83,8 @@ export const design = {
     mapLabel = button('No map loaded', 'Open map library', () => showPanel('maps', true));
     mapLabel.className = 'design-map-name';
     brand.append(inspectorToggle, wordmark, separator, mapLabel);
+    const gameMode = $('gameMode').closest('label');
+    if (gameMode) brand.append(gameMode);
     const about = node('a', 'design-about', 'Experimental');
     about.href = `${import.meta.env.BASE_URL}help.md`;
     about.target = '_blank';
@@ -106,6 +108,7 @@ export const design = {
     const [maps, target, scan] = sections;
     const bookmarkDetails = required<HTMLDetailsElement>('aside details:has(#bookmarkName)');
     const bookmarks = node('section');
+    bookmarks.dataset.gameOnly = 'goldsrc';
     bookmarkDetails.querySelector('summary')?.remove();
     bookmarks.append(...Array.from(bookmarkDetails.childNodes));
     bookmarkDetails.remove();

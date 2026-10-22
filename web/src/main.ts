@@ -27,6 +27,7 @@ import { initializeWeapons, selectedWeapon, selectedWeaponID, selectWeapon } fro
 import './style.css';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import type { V3 } from '../cs2/types';
 import { aimAnchor, isAimPoint } from './engine/aims.ts';
 import { readBSP, transform } from './engine/bsp.ts';
 import { damage, makeEngine } from './engine/engine.ts';
@@ -34,11 +35,17 @@ import { Walker } from './engine/movement.ts';
 import { capturePlacement, findWalkStart, postureSequence } from './engine/placement.ts';
 import { bestShot, classify, countVisible, ROW } from './engine/results.ts';
 import { readStudio } from './engine/studio.ts';
+import type { Cs2Game } from './games/cs2';
 import { buildMapMeshes } from './render/map.ts';
 import { buildSkybox, importSkyFiles, skyName } from './render/skybox.ts';
 import { get, hash, put } from './storage/cache.ts';
+import { gameUI } from './ui/game-mode';
 
 type Mode = 'orbit' | 'walk' | 'fly';
+let cs2: Cs2Game | undefined;
+let modeRevision = 0;
+const hasMap = () => !!cs2?.render || (!cs2 && !!engine);
+const activeWalker = () => cs2?.walker ?? walker;
 
 const canvas = $('canvas');
 const HITGROUPS = [
@@ -77,6 +84,13 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 const scene = new THREE.Scene(),
   camera = new THREE.PerspectiveCamera(70, 1, 1, 40000),
   orbit = new OrbitControls(camera, canvas);
+const glContext = renderer.getContext();
+const gpuInfo = glContext.getExtension('WEBGL_debug_renderer_info');
+const softwareGPU =
+  gpuInfo &&
+  /swiftshader|llvmpipe|software/i.test(
+    String(glContext.getParameter(gpuInfo.UNMASKED_RENDERER_WEBGL)),
+  );
 camera.position.set(-500, -1500, 1500);
 orbit.target.set(1000, 250, 250);
 orbit.enableDamping = false;
@@ -186,6 +200,7 @@ function navigationHint() {
   design.mode(mode, ownsNavigation(), dragLook);
 }
 function pauseNavigation() {
+  cs2?.movement.pause();
   navigationActive = false;
   keys.clear();
   drag = null;
@@ -214,6 +229,7 @@ function disposeGroup(group: THREE.Group) {
   }
 }
 function renderMap() {
+  if (cs2) return;
   disposeGroup(mapGroup);
   mapGroup.add(
     ...buildMapMeshes(bsp, {
@@ -298,6 +314,21 @@ function targetSettings() {
   return { p: p.map(Math.fround), yaw, pitch, seq, options };
 }
 function updateTarget(invalidate = true) {
+  if (cs2) {
+    const point = (['tx', 'ty', 'tz'] as const).map(number);
+    if (!point.every(Number.isFinite)) {
+      error(Error('Target coordinates must be finite'));
+      return false;
+    }
+    cs2.target = point as V3;
+    targetMarker.position.fromArray(point);
+    targetMarker.visible = true;
+    cs2.clearShot();
+    $('cs2Shot').textContent = 'Target changed. Trace AWP to update.';
+    if (invalidate) invalidateScan('Target changed. Scan to update.');
+    schedule();
+    return true;
+  }
   if (!model || !engine) return;
   try {
     const t = targetSettings();
@@ -344,6 +375,11 @@ function selectedAimPoint() {
   return point;
 }
 function syncAimMarker(anchor = aimAnchor(selectedAimPoint()) ?? 1) {
+  if (cs2) {
+    targetMarker.position.fromArray(cs2.target);
+    targetMarker.visible = true;
+    return;
+  }
   if (!pose) return;
   targetMarker.position.fromArray(pose.aims[anchor]);
   targetMarker.visible = true;
@@ -360,14 +396,16 @@ const shotAt = (row: Float32Array) =>
 function updatePoints(preserveSelection = false) {
   const previous = preserveSelection ? selection : null;
   clearSelection();
-  design.results(rows.length / ROW);
-  const c = classify(
-      rows,
-      number('armor'),
-      number('armorValue'),
-      selectedWeapon().armorRatio,
-      selectedAimPoint(),
-    ),
+  design.results(cs2 ? cs2.points.length : rows.length / ROW);
+  const c = cs2
+      ? cs2.classified()
+      : classify(
+          rows,
+          number('armor'),
+          number('armorValue'),
+          selectedWeapon().armorRatio,
+          selectedAimPoint(),
+        ),
     g = new THREE.BufferGeometry();
   hp = c.hp;
   kind = c.kind;
@@ -419,7 +457,7 @@ function syncArmor() {
   $('armorValue').disabled = $('armor').value === '0';
 }
 function focus() {
-  if (!pose) return;
+  if (!cs2 && !pose) return;
   setMode('orbit');
   const offset = camera.position.clone().sub(orbit.target);
   if (offset.lengthSq() < 1) offset.set(-1250, -1300, 1450);
@@ -430,6 +468,7 @@ function focus() {
   schedule();
 }
 async function loadAssets(next: Assets, remember = true) {
+  if (cs2) throw Error('Switch to CS 1.6 before importing GoldSrc assets');
   clearError();
   if (busy) throw Error('Cancel the active scan before replacing map assets');
   if (next.library && !next.map) {
@@ -719,12 +758,45 @@ function applySnapshot(text: string) {
   renderMap();
 }
 function setMode(next: Mode, fromSelection = false) {
-  if (next !== 'orbit' && !engine) return;
-  if (next === mode && !fromSelection) return;
+  if (next !== 'orbit' && !hasMap()) return;
+  if (next === mode && !fromSelection) {
+    modeRevision++;
+    return;
+  }
   const previous = mode;
   pauseNavigation();
   dragLook = false;
   walkPaused = fromSelection;
+  if (next === 'walk' && cs2) {
+    const game = cs2;
+    const token = ++modeRevision;
+    const source =
+      fromSelection && selection !== null
+        ? game.points[selection].source
+        : (camera.position.toArray() as V3);
+    void game
+      .startWalk(source, !fromSelection && previous !== 'fly')
+      .then((state) => {
+        if (cs2 !== game || modeRevision !== token) return;
+        camera.position.fromArray(state.eye);
+        if (fromSelection) {
+          const d = new THREE.Vector3(...game.target).sub(camera.position);
+          lookYaw = Math.atan2(d.y, d.x);
+          lookPitch = Math.atan2(d.z, Math.hypot(d.x, d.y));
+        } else if (previous === 'orbit') {
+          const dir = camera.getWorldDirection(new THREE.Vector3());
+          lookYaw = Math.atan2(dir.y, dir.x);
+          lookPitch = Math.asin(dir.z);
+        }
+        crouchToggle = state.crouched;
+        finishMode(next);
+      })
+      .catch((e) => {
+        if (cs2 === game) error(e);
+      });
+    return;
+  }
+  modeRevision++;
   if (next === 'walk') {
     try {
       if (fromSelection && selection !== null) {
@@ -766,7 +838,11 @@ function setMode(next: Mode, fromSelection = false) {
     camera.getWorldDirection(dir);
     orbit.target.copy(camera.position).addScaledVector(dir, 250);
   }
+  finishMode(next);
+}
+function finishMode(next: Mode) {
   mode = next;
+  applyGameView();
   if (next !== 'orbit') look();
   orbit.enabled = next === 'orbit';
   for (const id of ['orbit', 'walk', 'fly'] as const) {
@@ -775,6 +851,20 @@ function setMode(next: Mode, fromSelection = false) {
   }
   navigationHint();
   schedule();
+}
+function applyGameView() {
+  // One shared renderer. CS2 retains the POC's bounded walking draw distance and pixel budget.
+  camera.far = cs2 && mode === 'walk' ? 2000 : 40000;
+  camera.updateProjectionMatrix();
+  scene.fog = cs2 && mode === 'walk' ? new THREE.Fog(0x15232c, 1500, 2000) : null;
+  scene.background = cs2 ? new THREE.Color(0x15232c) : $('sky').checked ? skyTexture : null;
+  renderer.setPixelRatio(
+    cs2 ? (softwareGPU ? 0.75 : Math.min(devicePixelRatio, 1)) : Math.min(devicePixelRatio, 2),
+  );
+  renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
+  const ratio = renderer.getPixelRatio();
+  pointMaterial.uniforms.scale.value = (canvas.clientHeight * ratio) / 2;
+  pointMaterial.uniforms.sizeRange.value.set(3 * ratio, 16 * ratio);
 }
 function look() {
   const d = new THREE.Vector3(
@@ -785,6 +875,8 @@ function look() {
   camera.lookAt(camera.position.clone().add(d));
 }
 function clearSelection() {
+  shotRevision++;
+  cs2?.clearShot();
   design.selected(false);
   selection = null;
   selectionMarker.visible = false;
@@ -801,6 +893,20 @@ function clearSelection() {
   schedule();
 }
 function selectPoint(i: number) {
+  if (cs2) {
+    const game = cs2;
+    const point = game.points[i];
+    if (!point) return;
+    clearSelection();
+    selection = i;
+    selectionMarker.position.fromArray(pointCloud.geometry.attributes.position.array, i * 3);
+    selectionMarker.visible = true;
+    $('standHere').hidden = false;
+    design.selected(true);
+    void traceCs2(point.source, i);
+    schedule();
+    return;
+  }
   const r = rows.subarray(i * ROW, (i + 1) * ROW),
     best = shotAt(r),
     eye = [r[2], r[3], r[5]],
@@ -874,12 +980,16 @@ function lockScan(active: boolean) {
       (focusScanAfterStop && document.activeElement === document.body));
   design.scanning(active);
   busy = active;
-  $('scan').disabled = active || loadingScene || !engine;
+  $('scan').disabled = active || loadingScene || !hasMap();
+  $('gameMode').disabled = active || loadingScene;
+  $('cs2Trace').disabled = active || loadingScene || !cs2?.render;
+  $('cs2SourceCamera').disabled = loadingScene || !cs2?.render;
+  $('cs2TargetCamera').disabled = loadingScene || !cs2?.render;
   $('cancel').disabled = !active;
   $('cancel').textContent = 'Stop';
   if (!active) focusScanAfterStop = false;
   if (returnFocus && !$('scan').disabled) $('scan').focus({ preventScroll: true });
-  bookmarks.setScanning(active || loadingScene);
+  bookmarks.setScanning(active || loadingScene || !!cs2);
   library.setBusy(active || loadingScene);
   for (const id of ['restore', 'mapFile', 'modelFile', 'materialFile', 'snapshotFile'] as const)
     $(id).disabled = active || loadingScene;
@@ -888,6 +998,7 @@ function invalidateScan(message: string) {
   revision++;
   if (busy) stopScan();
   rows = new Float32Array();
+  if (cs2) cs2.points = [];
   updatePoints();
   $('progressText').textContent = message;
   $('progress').value = 0;
@@ -895,12 +1006,17 @@ function invalidateScan(message: string) {
 function stopScan() {
   if (!busy) return;
   focusScanAfterStop = document.activeElement === $('cancel');
-  worker?.postMessage({ type: 'cancel' });
+  if (cs2) cs2.cancel();
+  else worker?.postMessage({ type: 'cancel' });
   $('cancel').disabled = true;
   $('cancel').textContent = 'Stopping…';
 }
 function scan() {
   clearError();
+  if (cs2) {
+    void scanCs2();
+    return;
+  }
   if (!engine || !pose || busy || loadingScene || !assetSet.map || assetSet.materials === undefined)
     return;
   pauseNavigation();
@@ -979,6 +1095,189 @@ function scan() {
     weapon: selectedWeaponID(),
   } satisfies ScanRequest);
 }
+
+function writeTarget(point: V3) {
+  (['tx', 'ty', 'tz'] as const).forEach((id, i) => {
+    $(id).value = String(point[i]);
+  });
+}
+function writeSource(point: V3) {
+  (['cs2SourceX', 'cs2SourceY', 'cs2SourceZ'] as const).forEach((id, i) => {
+    $(id).value = String(point[i]);
+  });
+}
+let shotRevision = 0;
+async function traceCs2(
+  source = (['cs2SourceX', 'cs2SourceY', 'cs2SourceZ'] as const).map(number) as V3,
+  selected?: number,
+) {
+  const game = cs2;
+  if (!game?.render || loadingScene || busy) return;
+  if (!source.every(Number.isFinite)) {
+    error(Error('Source coordinates must be finite'));
+    return;
+  }
+  const token = ++shotRevision;
+  const revisionAtStart = revision;
+  try {
+    const shot = await game.trace(source);
+    if (
+      cs2 !== game ||
+      shotRevision !== token ||
+      revisionAtStart !== revision ||
+      (selected !== undefined && selection !== selected)
+    )
+      return;
+    game.drawShot(shot);
+    writeSource(source);
+    $('cs2Shot').textContent = game.describe(shot);
+    $('detailTitle').textContent = `AWP · ${shot.status.replaceAll('-', ' ')}`;
+    $('detailText').textContent =
+      `${shot.damage === null ? 'Unknown' : shot.damage.toFixed(2)} residual damage estimate · ${shot.spans.length} material intervals · simulator only`;
+    schedule();
+    return shot;
+  } catch (e) {
+    if (cs2 === game) error(e);
+  }
+}
+async function scanCs2() {
+  const game = cs2;
+  if (!game?.render || busy || loadingScene) return;
+  pauseNavigation();
+  if (!updateTarget(false)) return;
+  const token = revision;
+  lockScan(true);
+  try {
+    const reply = await game.scan((tested, total) => {
+      if (token !== revision) return;
+      $('progress').max = total;
+      $('progress').value = tested;
+      $('progressText').textContent = `CS2 floor/clearance and AWP tracing · ${tested}/${total}`;
+    });
+    if (cs2 !== game || token !== revision) {
+      game.points = [];
+      return;
+    }
+    pointMaterial.uniforms.size.value = 51.2;
+    updatePoints();
+    $('progressText').textContent =
+      `${reply.cancelled ? 'Stopped' : 'Complete'} · ${reply.tested}/625 grid cells · ${game.points.length} standing positions · ${((reply.ms ?? 0) / 1000).toFixed(2)} s · estimates only`;
+    $('progress').value = reply.tested ?? 0;
+  } catch (e) {
+    if (cs2 === game) error(e);
+  } finally {
+    lockScan(false);
+  }
+}
+let originalView: { camera: number[]; target: number[]; cut: number } | undefined;
+async function switchGame(next: string) {
+  if (busy || loadingScene || (next === 'cs2') === !!cs2) return;
+  clearError();
+  setMode('orbit');
+  modeRevision++;
+  loadingScene = true;
+  lockScan(false);
+  window.labReady = false;
+  shotRevision++;
+  revision++;
+  clearSelection();
+  rows = new Float32Array();
+  bookmarks.setReady(false);
+  if (next === 'cs2') {
+    originalView = {
+      camera: camera.position.toArray(),
+      target: orbit.target.toArray(),
+      cut: cut.constant,
+    };
+    disposeGroup(mapGroup);
+    disposeGroup(targetGroup);
+    skyRevision++;
+    setSky(null);
+    gameUI(true);
+    try {
+      const { Cs2Game } = await import('./games/cs2');
+      const game = new Cs2Game(schedule, error);
+      cs2 = game;
+      await game.load((message) => {
+        $('assetsStatus').textContent = message;
+      });
+      scene.add(game.group, game.shots);
+      applyGameView();
+      game.textures($('textures').checked);
+      writeTarget(game.target);
+      writeSource([77.46, 1227.8, 156.9]);
+      $('cut').min = String(Math.floor(game.bounds.min.z) - 1);
+      $('cut').max = String(Math.ceil(game.bounds.max.z) + 1);
+      applyCut(Number($('cut').max));
+      updateTarget(false);
+      updatePoints();
+      camera.position.fromArray(game.state?.eye ?? game.target);
+      camera.lookAt(new THREE.Vector3(...game.target));
+      orbit.target.fromArray(game.target);
+      orbit.update();
+      $('assetsStatus').textContent =
+        `CS2 · ${game.meta.map} · ${game.meta.triangleCount.toLocaleString()} physics triangles · ${(game.timing?.loadMs ?? 0).toFixed(0)} ms collision load`;
+      $('progressText').textContent =
+        'CS2 ready · AWP surrogate · 64-unit grid / ±768 units · standing scan only';
+      design.map(`CS2 / ${game.meta.map}`);
+      window.labReady = true;
+    } catch (e) {
+      cs2?.dispose();
+      cs2 = undefined;
+      restoreOriginalGame();
+      error(e);
+    }
+  } else {
+    cs2?.dispose();
+    cs2 = undefined;
+    restoreOriginalGame();
+  }
+  loadingScene = false;
+  lockScan(false);
+  bookmarks.setReady(!cs2 && !!engine);
+  schedule();
+}
+function restoreOriginalGame() {
+  gameUI(false);
+  applyGameView();
+  syncArmor();
+  if (engine && bsp) {
+    renderMap();
+    $('cut').min = String(Math.floor(bsp.world.mins[2]) - 1);
+    $('cut').max = String(Math.ceil(bsp.world.maxs[2]) + 1);
+    updateTarget(false);
+    if (originalView) {
+      camera.position.fromArray(originalView.camera);
+      orbit.target.fromArray(originalView.target);
+      orbit.update();
+      applyCut(originalView.cut);
+    }
+    void loadSkyForMap(bsp, assetSet);
+    $('assetsStatus').textContent = `${assetSet.mapName || 'Map'} ready`;
+    design.map(assetSet.mapName || 'Map');
+  } else {
+    targetMarker.visible = false;
+    document.documentElement.dataset.ready = 'false';
+    $('assetsStatus').textContent = 'Choose an imported CS 1.6 map to begin.';
+  }
+  updatePoints();
+  $('progressText').textContent = engine ? 'Ready to scan.' : 'Load a map to begin.';
+  window.labReady = !!engine;
+}
+$('gameMode').onchange = () => {
+  void switchGame($('gameMode').value);
+};
+$('cs2SourceCamera').onclick = () => {
+  writeSource(camera.position.toArray() as V3);
+};
+$('cs2TargetCamera').onclick = () => {
+  writeTarget(camera.position.toArray() as V3);
+  updateTarget();
+};
+$('cs2Trace').onclick = () => {
+  pauseNavigation();
+  void traceCs2();
+};
 for (const id of [
   'tx',
   'ty',
@@ -1127,6 +1426,11 @@ $('xray').onchange = () => {
   schedule();
 };
 $('textures').onchange = () => {
+  if (cs2) {
+    cs2.textures($('textures').checked);
+    schedule();
+    return;
+  }
   for (const c of mapGroup.children) {
     if (!(c instanceof THREE.Mesh)) continue;
     const material = c.material as THREE.MeshBasicMaterial;
@@ -1137,6 +1441,17 @@ $('textures').onchange = () => {
 };
 for (const id of ['orbit', 'walk', 'fly'] as const) $(id).onclick = () => setMode(id);
 $('overview').onclick = () => {
+  if (cs2) {
+    setMode('orbit');
+    const center = cs2.bounds.getCenter(new THREE.Vector3());
+    const size = cs2.bounds.getSize(new THREE.Vector3()).length();
+    orbit.target.copy(center);
+    camera.position.copy(center).add(new THREE.Vector3(-0.4, -0.5, 0.9).multiplyScalar(size));
+    orbit.update();
+    applyCut(Number($('cut').max));
+    schedule();
+    return;
+  }
   if (!bsp) return;
   setMode('orbit');
   const lo = bsp.world.mins,
@@ -1150,6 +1465,19 @@ $('overview').onclick = () => {
   schedule();
 };
 function placeTarget() {
+  if (cs2) {
+    if (mode !== 'walk') {
+      setMode('walk');
+      return;
+    }
+    if (!cs2.state?.grounded) {
+      error(Error('Stand on a floor before placing the target'));
+      return;
+    }
+    writeTarget(cs2.walker.eye as V3);
+    updateTarget();
+    return;
+  }
   if (!engine || !model) return;
   if (mode !== 'walk') {
     setMode('walk');
@@ -1322,7 +1650,7 @@ document.addEventListener('keydown', (e) => {
   if (action === 'map') return $('overview').click();
   if (action === 'place') return placeTarget();
   walkPaused = false;
-  if (action === 'crouch') crouchToggle = !walker.duck;
+  if (action === 'crouch') crouchToggle = !activeWalker().duck;
   else keys.add(movementKey(e.code));
   wakeNavigation();
 });
@@ -1376,29 +1704,40 @@ function tick(now: number) {
   frameRequested = false;
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
-  if (mode !== 'orbit' && engine && ownsNavigation()) {
+  if (mode !== 'orbit' && hasMap() && ownsNavigation()) {
     let moving = false;
     if (mode === 'walk') {
-      acc = walkPaused ? 0 : Math.min(0.1, acc + dt);
-      while (acc >= 0.01) {
-        walker.step(
-          0.01,
-          {
-            forward: (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0),
-            side: (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0),
-            jump: keys.has('Space'),
-            duck: keys.has('ControlLeft') || crouchToggle,
-          },
-          lookYaw,
-        );
-        acc -= 0.01;
+      const body = activeWalker();
+      const input = {
+        forward: (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0),
+        side: (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0),
+        jump: keys.has('Space'),
+        duck: keys.has('ControlLeft') || crouchToggle,
+      };
+      if (cs2) {
+        if (
+          !walkPaused &&
+          (input.forward ||
+            input.side ||
+            input.jump ||
+            input.duck !== body.duck ||
+            !body.ground ||
+            body.v.some((v) => Math.abs(v) > 0.01))
+        )
+          body.step(dt, input, lookYaw);
+      } else {
+        acc = walkPaused ? 0 : Math.min(0.1, acc + dt);
+        while (acc >= 0.01) {
+          body.step(0.01, input, lookYaw);
+          acc -= 0.01;
+        }
       }
-      camera.position.fromArray(walker.eye);
+      camera.position.fromArray(body.eye);
       moving =
         !walkPaused &&
         (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space'].some((key) => keys.has(key)) ||
-          !walker.ground ||
-          walker.v.some((v) => Math.abs(v) > 0.01));
+          !body.ground ||
+          body.v.some((v) => Math.abs(v) > 0.01));
     } else {
       const speed = (keys.has('ShiftLeft') ? 1500 : 400) * dt,
         f = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0),
@@ -1417,10 +1756,10 @@ function tick(now: number) {
 }
 window.labDebug = {
   get map() {
-    return assetSet.mapName;
+    return cs2?.meta?.map ?? assetSet.mapName;
   },
   get faces() {
-    return bsp?.faces.length;
+    return cs2 ? undefined : bsp?.faces.length;
   },
   get triangles() {
     return renderer.info.render.triangles;
@@ -1429,7 +1768,7 @@ window.labDebug = {
     return shownCount;
   },
   get rows() {
-    return rows.length / ROW;
+    return cs2 ? cs2.points.length : rows.length / ROW;
   },
   get mode() {
     return mode;
@@ -1446,6 +1785,11 @@ window.labDebug = {
 };
 window.lab = {
   whenStarted,
+  switchGame,
+  traceCs2,
+  get cs2() {
+    return cs2;
+  },
   get engine() {
     return engine;
   },
@@ -1500,11 +1844,12 @@ const initialLoad = get<Assets>('assets', 'last')
     if (a) return loadAssets(a, false);
   })
   .catch((e) => console.warn('Cached assets unavailable', errorMessage(e)))
-  .finally(() => {
+  .finally(async () => {
     loadingScene = false;
     lockScan(false);
     bookmarks.setReady(!!engine);
     if (!engine) $('progressText').textContent = 'Load a map to begin.';
+    if (new URLSearchParams(location.search).get('game') === 'cs2') await switchGame('cs2');
   });
 function whenStarted() {
   return initialLoad;
@@ -1513,6 +1858,8 @@ function whenStarted() {
 export type LabAPI = typeof windowAPI;
 const windowAPI = {
   whenStarted,
+  switchGame,
+  traceCs2,
   loadAssets,
   scan,
   selectPoint,
@@ -1539,6 +1886,7 @@ declare global {
       gl: number;
     };
     lab: typeof windowAPI & {
+      readonly cs2: Cs2Game | undefined;
       engine: Engine;
       bsp: BSP;
       model: ReturnType<typeof readStudio>;

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
+import { localCs2 } from './local-cs2.ts';
 
 const root = fileURLToPath(new URL('.', import.meta.url));
 const publicBuild = process.env.VITE_PUBLIC_BUILD === '1';
@@ -28,6 +29,8 @@ function offlineShell(): Plugin {
         'ReGameDLL-LICENSE.txt',
         'THREE-LICENSE.txt',
         'OCTICONS-LICENSE.txt',
+        'THREE-MESH-BVH-LICENSE.txt',
+        'MESHOPTIMIZER-LICENSE.txt',
       ])
         files.push(`${base}licenses/${name}`);
       const version = createHash('sha256')
@@ -55,7 +58,7 @@ export default defineConfig({
   root,
   base: process.env.WB_BASE_PATH || '/',
   publicDir: 'public',
-  plugins: [offlineShell()],
+  plugins: [offlineShell(), localCs2()],
   server: {
     host: '127.0.0.1',
     port: 8768,
