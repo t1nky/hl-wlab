@@ -39,6 +39,7 @@ import { get, hash, put } from './storage/cache.ts';
 type Mode = 'orbit' | 'walk' | 'fly';
 
 const canvas = $('canvas');
+const HEAD_AIM = 1; // Studio pose anchors are chest, head, pelvis.
 const HITGROUPS = [
   'generic',
   'head',
@@ -324,7 +325,7 @@ function updateTarget(invalidate = true) {
         new THREE.LineBasicMaterial({ color: cssValue('target'), depthTest: false }),
       ),
     );
-    targetMarker.position.fromArray(pose.aims[0]);
+    targetMarker.position.fromArray(pose.aims[HEAD_AIM]);
     targetMarker.visible = true;
     if (invalidate) {
       invalidateScan('Target changed. Scan to update.');
@@ -400,7 +401,7 @@ function focus() {
   const offset = camera.position.clone().sub(orbit.target);
   if (offset.lengthSq() < 1) offset.set(-1250, -1300, 1450);
   offset.setLength(Math.max(400, Math.min(2400, offset.length())));
-  orbit.target.fromArray(pose.aims[0]);
+  orbit.target.fromArray(pose.aims[HEAD_AIM]);
   camera.position.copy(orbit.target).add(offset);
   orbit.update();
   schedule();
