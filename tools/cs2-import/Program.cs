@@ -34,6 +34,7 @@ var sources = new[] { mapPath }.Concat(new[] { csgo, Path.Combine(game, "game", 
 var fingerprint = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(
     $"{schema}|VRF20.1.7467|{steamInf}|{string.Join('\n', sources)}|{File.ReadAllText(Path.Combine(repo, "tools/cs2-import/Program.cs"))}")));
 var manifestPath = Path.Combine(output, "map.json");
+if (args.Contains("--render")) RenderExport.Prepare(mapPath, output, fingerprint, args.Contains("--force"));
 if (!args.Contains("--force") && File.Exists(manifestPath) && File.Exists(Path.Combine(output, "map.cs2map")))
 {
   using var old = JsonDocument.Parse(File.ReadAllText(manifestPath));

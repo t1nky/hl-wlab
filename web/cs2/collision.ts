@@ -1,4 +1,12 @@
-import { Box3, BufferAttribute, BufferGeometry, DoubleSide, Ray, Vector3 } from 'three';
+import {
+  Box3,
+  BufferAttribute,
+  BufferGeometry,
+  DoubleSide,
+  Ray,
+  type Triangle,
+  Vector3,
+} from 'three';
 import { CENTER, MeshBVH, type SerializedBVH } from 'three-mesh-bvh';
 import { EPS, type MapData, type Metadata, required, type Shot, type Span, type V3 } from './types';
 
@@ -6,6 +14,60 @@ export interface Crossing {
   distance: number;
   facing: number;
   material: number;
+}
+
+export interface PlayerSweep {
+  fraction: number;
+  normal: V3;
+}
+
+// Continuous separating-axis test: moving axis-aligned player box versus a triangle.
+// The 13 axes are the box axes, triangle normal, and box-axis/edge cross products.
+// Unlike sampling rays or destination overlap, this cannot skip a thin wall between ticks.
+function sweepTriangle(
+  triangle: Triangle,
+  center: Vector3,
+  half: Vector3,
+  delta: Vector3,
+): PlayerSweep | null {
+  const edges = [
+    new Vector3().subVectors(triangle.b, triangle.a),
+    new Vector3().subVectors(triangle.c, triangle.b),
+    new Vector3().subVectors(triangle.a, triangle.c),
+  ];
+  const axes = [new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(0, 0, 1)];
+  const candidates = [...axes, new Vector3().crossVectors(edges[0], edges[1])];
+  for (const edge of edges)
+    for (const axis of axes) candidates.push(new Vector3().crossVectors(edge, axis));
+  let enter = -Infinity;
+  let exit = Infinity;
+  let normal = new Vector3();
+  for (const axis of candidates) {
+    if (axis.lengthSq() < 1e-14) continue;
+    axis.normalize();
+    const projections = [triangle.a.dot(axis), triangle.b.dot(axis), triangle.c.dot(axis)];
+    const radius =
+      Math.abs(axis.x) * half.x + Math.abs(axis.y) * half.y + Math.abs(axis.z) * half.z;
+    const low = Math.min(...projections) - radius - center.dot(axis);
+    const high = Math.max(...projections) + radius - center.dot(axis);
+    const speed = delta.dot(axis);
+    if (Math.abs(speed) < 1e-10) {
+      // A merely touching, parallel face must not stop sliding along a floor/wall.
+      if (low >= -1e-7 || high <= 1e-7) return null;
+      continue;
+    }
+    const first = Math.min(low / speed, high / speed);
+    const last = Math.max(low / speed, high / speed);
+    if (first > enter) {
+      enter = first;
+      normal = axis.clone().multiplyScalar(speed > 0 ? -1 : 1);
+    }
+    exit = Math.min(exit, last);
+    if (enter > exit + 1e-8) return null;
+  }
+  // Pre-existing overlap is rejected at placement, not pushed through arbitrary walls.
+  if (enter < -1e-7 || enter > 1 || exit < 0 || !Number.isFinite(enter)) return null;
+  return { fraction: Math.max(0, enter), normal: normal.toArray() as V3 };
 }
 // Closed outward-wound meshes alternate entry/front and exit/back faces. Never invent an exit.
 export function meshSpans(
@@ -296,6 +358,46 @@ export class CollisionMap {
       [center.x, center.y, center.z + 1],
       'player',
     ).spans.some((s) => s.startInside);
+  }
+  sweepPlayer(foot: V3, height: number, displacement: V3): PlayerSweep | null {
+    const center = new Vector3(foot[0], foot[1], foot[2] + height / 2);
+    const half = new Vector3(16, 16, height / 2);
+    const delta = new Vector3(...displacement);
+    const bounds = new Box3(center.clone().sub(half), center.clone().add(half));
+    bounds.union(new Box3(bounds.min.clone().add(delta), bounds.max.clone().add(delta)));
+    bounds.expandByScalar(0.001);
+    let closest: PlayerSweep | null = null;
+    this.bvh.shapecast({
+      intersectsBounds: (box) => bounds.intersectsBox(box),
+      intersectsTriangle: (triangle, index) => {
+        if (!this.metadata.shapes[this.data.shapes[index]].player) return false;
+        const hit = sweepTriangle(triangle, center, half, delta);
+        if (hit && (!closest || hit.fraction < closest.fraction)) closest = hit;
+        return false;
+      },
+    });
+    return closest;
+  }
+  playerFits(foot: V3, height: number, checkInside = false): boolean {
+    const box = new Box3(
+      new Vector3(foot[0] - 15.99, foot[1] - 15.99, foot[2] + 0.01),
+      new Vector3(foot[0] + 15.99, foot[1] + 15.99, foot[2] + height - 0.01),
+    );
+    let overlap = false;
+    this.bvh.shapecast({
+      intersectsBounds: (bounds) => bounds.intersectsBox(box),
+      intersectsTriangle: (triangle, index) => {
+        if (!this.metadata.shapes[this.data.shapes[index]].player) return false;
+        if (triangle.intersectsBox(box)) overlap = true;
+        return overlap;
+      },
+    });
+    if (overlap) return false;
+    if (!checkInside) return true;
+    const center: V3 = [foot[0], foot[1], foot[2] + height / 2];
+    return !this.trace(center, [center[0], center[1], center[2] + 1], 'player').spans.some(
+      (span) => span.startInside,
+    );
   }
   dispose() {
     this.geometry.dispose();

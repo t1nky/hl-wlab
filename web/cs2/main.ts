@@ -22,12 +22,19 @@ import {
   WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { loadRenderMap, type RenderMap } from './render-map';
 import { decodeMap, type MapData, type Metadata, required, type Shot, type V3 } from './types';
+import { createWalkControls, type WalkState } from './walk-controls';
 import './style.css';
 
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const button = (id: string) => element<HTMLButtonElement>(id);
 const input = (id: string) => element<HTMLInputElement>(id);
+if (new URLSearchParams(location.search).get('view') === 'collision') {
+  element<HTMLSelectElement>('display').value = 'collision';
+  element('render-status').textContent =
+    'Collision view · choose Textures to load local appearance.';
+}
 const view = element('view');
 const renderer = new WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
@@ -54,6 +61,10 @@ const material = new MeshLambertMaterial({
 let meta: Metadata, data: MapData, geometry: BufferGeometry;
 const shotGroup = new Group();
 scene.add(shotGroup);
+const collisionGroup = new Group();
+scene.add(collisionGroup);
+let texturedMap: RenderMap | null = null;
+let texturesLoading = false;
 let scanPoints: Points | null = null;
 let scanSources: V3[] = [];
 let pickMode: 'source' | 'target' | null = null;
@@ -82,6 +93,8 @@ interface Reply {
   buildMs?: number;
   cached?: boolean;
   cacheSaved?: boolean;
+  state?: WalkState;
+  placement?: string;
 }
 function request(op: object): Promise<Reply> {
   const id = ++sequence;
@@ -106,6 +119,73 @@ function showError(error: unknown) {
   element('load').className = 'error';
   console.error(error);
 }
+function updateDisplay() {
+  const showTextures = element<HTMLSelectElement>('display').value === 'textures' && !!texturedMap;
+  collisionGroup.visible = !showTextures;
+  if (texturedMap) texturedMap.group.visible = showTextures;
+  if (!walking.active)
+    element('hint').textContent = showTextures
+      ? 'Inferno · base textures · physics traced separately'
+      : 'Inferno collision · surfaces colored by material';
+}
+async function ensureTextures() {
+  if (texturedMap || texturesLoading) {
+    updateDisplay();
+    return;
+  }
+  texturesLoading = true;
+  try {
+    texturedMap = await loadRenderMap({
+      clippingPlanes: [ceiling],
+      collisionFingerprint: meta.fingerprint,
+      onProgress: (message) => {
+        element('render-status').textContent = message;
+      },
+    });
+    scene.add(texturedMap.group);
+    updateDisplay();
+  } catch (error) {
+    element('render-status').textContent = String(error).replace(/^Error: /, '');
+    element<HTMLSelectElement>('display').value = 'collision';
+    updateDisplay();
+  } finally {
+    texturesLoading = false;
+  }
+}
+const walking = createWalkControls({
+  camera,
+  canvas: renderer.domElement,
+  request: async (message) => {
+    const reply = await request(message);
+    return { state: required(reply.state), ms: reply.ms, placement: reply.placement };
+  },
+  changed: (active, message) => {
+    controls.enabled = !active;
+    button('walk').setAttribute('aria-pressed', String(active));
+    button('orbit').setAttribute('aria-pressed', String(!active));
+    button('view-source').disabled = !active;
+    element('walk-status').textContent = message;
+    element('hint').textContent = active
+      ? 'Walk · click to look · E places stationary target'
+      : texturedMap?.group.visible
+        ? 'Inferno · base textures · physics traced separately'
+        : 'Inferno collision · surfaces colored by material';
+    if (!active)
+      controls.target
+        .copy(camera.position)
+        .addScaledVector(camera.getWorldDirection(new Vector3()), 200);
+  },
+  placeTarget: (eye) => {
+    writeCoordinates('target', eye);
+    clearScan();
+    currentShot = null;
+    disposeGroup(shotGroup);
+    marker(new Vector3(...eye), 0x58d8ef, 8);
+    element('result').textContent =
+      'Target placed at your eye. Move to a shooting position, then Trace from view.';
+  },
+  error: showError,
+});
 function coordinates(id: string): V3 {
   const values = input(id).value.trim().split(/[ ,]+/).map(Number);
   if (values.length !== 3 || !values.every(Number.isFinite))
@@ -151,7 +231,7 @@ function buildView(buffer: ArrayBuffer) {
   setRenderIndex();
   geometry.computeVertexNormals();
   geometry.computeBoundingSphere();
-  scene.add(new Mesh(geometry, material));
+  collisionGroup.add(new Mesh(geometry, material));
 }
 function disposeGroup(group: Group) {
   for (const child of [...group.children]) {
@@ -257,6 +337,7 @@ async function trace(source = coordinates('source'), target = coordinates('targe
   return required(reply.shot);
 }
 function frame() {
+  if (walking.active || walking.starting) walking.leave();
   const source = new Vector3(...coordinates('source')),
     target = new Vector3(...coordinates('target'));
   const center = source.clone().add(target).multiplyScalar(0.5),
@@ -266,11 +347,13 @@ function frame() {
   controls.update();
 }
 function overview() {
+  if (walking.active || walking.starting) walking.leave();
   controls.target.set(500, 1100, 100);
   camera.position.set(400, -5400, 7000);
   controls.update();
 }
 async function scan() {
+  if (walking.active || walking.starting) walking.leave();
   button('scan').disabled = true;
   button('cancel').disabled = false;
   try {
@@ -320,10 +403,12 @@ button('trace').onclick = () => {
 button('focus').onclick = frame;
 button('overview').onclick = overview;
 button('source-pick').onclick = () => {
+  if (walking.active || walking.starting) walking.leave();
   pickMode = 'source';
   element('hint').textContent = 'Click source floor · standing eye +64 units';
 };
 button('target-pick').onclick = () => {
+  if (walking.active || walking.starting) walking.leave();
   pickMode = 'target';
   element('hint').textContent = 'Click target floor · stationary chest point +48 units';
 };
@@ -338,12 +423,29 @@ input('cut').oninput = () => {
   ceiling.constant = Number(input('cut').value);
   element('cut-value').textContent = input('cut').value;
 };
-input('clip').onchange = setRenderIndex;
+input('clip').onchange = () => {
+  setRenderIndex();
+  if (input('clip').checked) element<HTMLSelectElement>('display').value = 'collision';
+  updateDisplay();
+};
+element<HTMLSelectElement>('display').onchange = () => {
+  updateDisplay();
+  if (element<HTMLSelectElement>('display').value === 'textures') void ensureTextures();
+};
+button('walk').onclick = () => {
+  pickMode = null;
+  walking.enter(coordinates('source'), coordinates('target')).catch(showError);
+};
+button('orbit').onclick = () => walking.leave();
+button('view-source').onclick = () => {
+  if (walking.state) trace([...walking.state.eye], coordinates('target')).catch(showError);
+};
 let pointerStart = new Vector2();
 renderer.domElement.onpointerdown = (e) => {
   pointerStart = new Vector2(e.clientX, e.clientY);
 };
 renderer.domElement.onpointerup = async (e) => {
+  if (walking.active) return;
   if (pointerStart.distanceTo(new Vector2(e.clientX, e.clientY)) > 4 || e.button !== 0 || !meta)
     return;
   const rect = renderer.domElement.getBoundingClientRect(),
@@ -371,7 +473,7 @@ renderer.domElement.onpointerup = async (e) => {
       const p = reply.hit.point;
       writeCoordinates(pickMode, [p[0], p[1], p[2] + (pickMode === 'source' ? 64 : 48)]);
       pickMode = null;
-      element('hint').textContent = 'Real Inferno collision · surfaces colored by material';
+      updateDisplay();
       clearScan();
       await trace();
     } else if (scanPoints) {
@@ -393,8 +495,12 @@ new ResizeObserver(() => {
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
 }).observe(view);
-renderer.setAnimationLoop(() => {
-  controls.update();
+let previousFrame = performance.now();
+renderer.setAnimationLoop((time) => {
+  const dt = Math.min(0.05, Math.max(0, (time - previousFrame) / 1000));
+  previousFrame = time;
+  if (walking.active) void walking.update(dt);
+  else controls.update();
   renderer.render(scene, camera);
 });
 async function init() {
@@ -405,9 +511,11 @@ async function init() {
     `${meta.triangleCount.toLocaleString()} collision triangles · ${(meta.binaryBytes / 1048576).toFixed(1)} MiB · ${(required(reply.loadMs) / 1000).toFixed(2)} s load · ${required(reply.buildMs).toFixed(0)} ms BVH ${reply.cached ? 'restored' : 'built'}${reply.cacheSaved ? ' · cached' : ''}`;
   element('coverage').textContent =
     `${meta.steamInf.replaceAll('\n', ' · ')}\n${JSON.stringify(meta.stats)}\n${meta.warnings.join('\n')}`;
-  for (const id of ['source-pick', 'target-pick', 'trace', 'scan']) button(id).disabled = false;
+  for (const id of ['source-pick', 'target-pick', 'trace', 'scan', 'walk'])
+    button(id).disabled = false;
   await trace();
   frame();
+  if (element<HTMLSelectElement>('display').value === 'textures') void ensureTextures();
   Object.assign(window, {
     cs2: {
       meta,
@@ -415,6 +523,10 @@ async function init() {
       scan,
       frame,
       overview,
+      walking,
+      get renderMap() {
+        return texturedMap?.metadata ?? null;
+      },
       get shot() {
         return currentShot;
       },

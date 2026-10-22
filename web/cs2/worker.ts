@@ -1,6 +1,7 @@
 import { Vector3 } from 'three';
 import { MeshBVH, type SerializedBVH } from 'three-mesh-bvh';
 import { CollisionMap } from './collision';
+import { WalkController, type WalkInput } from './movement';
 import { decodeMap, type Metadata, type V3 } from './types';
 
 type Request = { id: number } & (
@@ -9,8 +10,13 @@ type Request = { id: number } & (
   | { op: 'pick'; source: V3; direction: V3; maxZ: number }
   | { op: 'scan'; target: V3 }
   | { op: 'cancel' }
+  | { op: 'walk-start'; eye: V3 }
+  | { op: 'walk-reset' }
+  | { op: 'walk-step'; dt: number; input: WalkInput; yaw: number }
 );
 let map: CollisionMap;
+let walker: WalkController;
+let walkEye: V3;
 let cancelled = false;
 let scanning = false;
 const scope = self as unknown as {
@@ -85,6 +91,7 @@ async function load(id: number) {
     map = new CollisionMap(decodeMap(buffer), meta);
   }
   const buildMs = performance.now() - buildStart;
+  walker = new WalkController(map);
   let cacheSaved = !!cached;
   if (!cached) {
     try {
@@ -172,6 +179,26 @@ scope.onmessage = async ({ data }) => {
         cancelled = true;
         send(data.id, { kind: 'cancelled' });
         break;
+      case 'walk-start': {
+        const start = performance.now();
+        const result = walker.start(data.eye);
+        walkEye = data.eye;
+        send(data.id, { kind: 'walk', ...result, ms: performance.now() - start });
+        break;
+      }
+      case 'walk-reset': {
+        if (!walkEye) throw Error('Start walking first');
+        const start = performance.now();
+        send(data.id, { kind: 'walk', ...walker.start(walkEye), ms: performance.now() - start });
+        break;
+      }
+      case 'walk-step': {
+        if (!walkEye) throw Error('Start walking first');
+        const start = performance.now();
+        const state = walker.step(data.dt, data.input, data.yaw);
+        send(data.id, { kind: 'walk', state, ms: performance.now() - start });
+        break;
+      }
     }
   } catch (error) {
     send(data.id, { kind: 'error', error: String(error) });

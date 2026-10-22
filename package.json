@@ -21,6 +21,7 @@
     "check:repo": "bun tools/check-repo.mjs",
     "check:pages": "bun tools/check-pages.mjs",
     "cs2:prepare": "bun tools/cs2-prepare.mjs",
+    "cs2:prepare:render": "bun tools/cs2-prepare.mjs --render",
     "cs2:dev": "bun --bun vite --config web/cs2/vite.config.ts",
     "cs2:check": "tsc --noEmit -p web/cs2/tsconfig.json && bun --bun vite build --config web/cs2/vite.config.ts",
     "cs2:smoke": "bun tools/cs2-smoke.mjs"
@@ -34,6 +35,7 @@
     "@types/node": "^24.0.0",
     "@types/three": "0.170.0",
     "fake-indexeddb": "6.2.6",
+    "meshoptimizer": "1.3.0",
     "typescript": "7.0.2",
     "vite": "8.3.5",
     "vitest": "5.0.5"

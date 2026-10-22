@@ -78,6 +78,7 @@ are not covered by this license and are not distributed here.
 
 ## CS2 experiment
 
-The `cs2-poc` branch has a separate, local-only Inferno collision viewer and AWP
-trace/scan experiment. See [launch commands, tests, and accuracy limits](docs/cs2-poc.md).
+The `cs2-poc` branch has a separate, local-only Inferno viewer with base textures,
+collision-aware walking, and an AWP trace/scan experiment. See
+[launch commands, tests, and accuracy limits](docs/cs2-poc.md).
 It does not change the CS1.6 application or publish game files.

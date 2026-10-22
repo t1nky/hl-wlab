@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>CS2 · Inferno collision POC</title>
+    <title>CS2 · Inferno wallbang POC</title>
   </head>
   <body>
     <main>
@@ -14,9 +14,21 @@
         </header>
         <p id="load" role="status">Loading local collision package and building worker BVH…</p>
         <p class="notice">
-          Simulator only. Collision diagnostic, unvalidated damage estimate. Static geometry; doors
-          and movable entities omitted.
+          Simulator only. Unvalidated damage estimate. Static geometry; doors and movable entities
+          omitted.
         </p>
+        <div class="buttons">
+          <button id="orbit" type="button" aria-pressed="true">Orbit</button>
+          <button id="walk" type="button" disabled aria-pressed="false">Walk</button>
+          <button id="view-source" type="button" disabled>Trace from view</button>
+        </div>
+        <p id="walk-status">Walk uses player collision; movement feel is approximate.</p>
+        <label for="display">Map appearance</label>
+        <select id="display">
+          <option value="textures">Textures</option>
+          <option value="collision">Collision diagnostic</option>
+        </select>
+        <p id="render-status" role="status">Checking local textured map…</p>
         <div class="buttons">
           <button id="source-pick" type="button" disabled>Pick source floor</button
           ><button id="target-pick" type="button" disabled>Pick target floor</button>
@@ -68,9 +80,11 @@
           </p>
         </details>
         <p class="help">
-          Drag to orbit · right-drag to pan · wheel to zoom. Pick a visible floor to place eye/chest
-          64/48 units above it. Orange = source, cyan = target. Scan: green estimate reaches, red
-          blocked, purple indeterminate. Click a scan point to inspect its shot.
+          Orbit: drag to rotate, right-drag to pan, wheel to zoom. Walk: click to look, WASD move,
+          Space jump, Ctrl/C crouch, E place target at your eye, Esc pause. Use Trace from view
+          after moving. Pick a visible floor to place eye/chest 64/48 units above it. Orange =
+          source, cyan = target. Scan: green estimate reaches, red blocked, purple indeterminate.
+          Click a scan point to inspect its shot.
         </p>
       </aside>
       <div id="view">

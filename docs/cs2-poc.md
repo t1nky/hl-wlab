@@ -1,4 +1,4 @@
-# CS2 Inferno collision POC
+# CS2 Inferno wallbang POC
 
 Experimental branch `cs2-poc`. Run locally; do not deploy the prepared map. The
 CS1.6 entry point, service worker, and production build inputs are unchanged.
@@ -9,6 +9,7 @@ From this repository (`C:\Users\kyler\Projects\hl-wlab`, resolving to
 ```powershell
 bun install --frozen-lockfile
 bun run cs2:prepare
+bun run cs2:prepare:render     # optional actual render meshes and capped base textures
 bun run cs2:dev
 ```
 
@@ -19,6 +20,26 @@ For another installation location:
 ```powershell
 bun run cs2:prepare --game="D:\SteamLibrary\steamapps\common\Counter-Strike Global Offensive"
 ```
+
+The CS2 entry remains separate from the production CS1.6 app. **Textures** uses
+the locally prepared render package; **Collision diagnostic** shows the physics
+surfaces. If render preparation is missing, collision view still works and the
+page shows the exact preparation command. `/?view=collision` skips texture loading.
+
+Choose **Walk**, then click the map to capture the mouse. WASD moves, Space jumps,
+Ctrl/C holds crouch, E places a stationary target point at the current eye, and
+Escape pauses. Move away and click **Trace from view** to shoot from the new eye
+position toward that target. **Orbit**, **Frame shot**, picking a floor, or starting
+a scan exits walking. Walking can start near the source when the full player
+volume fits; otherwise it falls back to a valid map spawn and reports the placement.
+An arbitrary point-source ray need not be a valid standing-player position.
+
+Movement is an exploration approximation using a continuous swept 32×32×72 box
+(54 units crouched), player collision flags, 18-unit steps, gravity, sliding and
+jump/ceiling/clearance checks. Eye heights are 64/46 units above the feet. Physics
+ticks run in the existing collision worker with at most one UI step outstanding;
+the frame loop drops excessive catch-up after stalls. This is not CS2 movement
+prediction/acceleration parity. Existing entity-state omissions still apply.
 
 Only Inferno is supported by this small importer. NuGet restores the pinned
 MIT-licensed ValveResourceFormat 20.1.7467 and its dependencies; no game download
@@ -67,8 +88,37 @@ indices through indirect traversal. Convex penetration uses analytic plane
 clipping, including origins already inside a hull. Mesh tracing deduplicates
 shared-edge crossings, checks outward entry/exit alternation and fails closed on
 ambiguous or unclosed intervals. Overlapping solid volumes are unioned and use
-the more resistant material, rather than charging thickness twice. Surface colors
-are diagnostic vertex colors, not Valve textures; physical prop geometry is shown.
+the more resistant material, rather than charging thickness twice. Collision view
+uses diagnostic vertex colors and physical prop geometry. Textured view uses
+separate render meshes; neither tracing nor walking uses those render triangles.
+
+`tools/cs2-import/RenderExport.cs` exports the static world-node scene through VRF,
+retaining its actual UVs, model transforms and instancing. Base-color images use
+the first available color layer, capped at 512 pixels, with simple browser lighting.
+Source shader blending, normal/roughness maps, baked lighting and skyboxes are
+omitted. This is recognizable map appearance, not a reproduction of CS2 lighting.
+Meshoptimizer 1.3.0 compresses geometry losslessly; every buffer view is decoded
+and compared byte-for-byte through Three's bundled decoder before publishing the
+local package. Browser decoding uses two workers. Shared geometry is retained.
+Indexed primitive bounds use only referenced vertices, so shared whole-model
+position buffers do not make every prop visible to the camera at once.
+
+The actual render package has 8,419,800 triangles, 6,642 primitives and 243 unique
+base textures. 8,418,064 triangles (99.98%) have a base texture. Its compressed
+files occupy 268.0 MiB; decoded geometry is 353.3 MiB and estimated texture GPU
+storage is 288.3 MiB, in addition to collision and browser overhead. It is intended
+for a desktop local experiment. Final render preparation took 44.94 s plus 1.14 s
+for verified compression; a cached preparation checked render/collision data in
+5/104 ms. An earlier export was observed at 4.34 GiB peak process memory; the
+final export's peak was not sampled. These are local measurements, not guarantees.
+There is no portal/occlusion culling or render LOD yet: one tested first-person
+view still submitted about 4,300 draw calls and 5.5 million triangles. The initial
+orbit view fell from 5,852 calls/7.92 million triangles to 528/1.01 million after
+tightening bounds. Browser bounds preparation took 191 ms. The POC remains heavy;
+these counts do not establish a frame-rate guarantee.
+Sixteen sampled synchronous first-person frame callbacks took 13.1–15.9 ms in
+T3 preview; GPU completion was not measured, and hidden-tab scheduling prevents
+treating that sample as an FPS benchmark.
 
 Prepared data is under ignored `.local/cs2/de_inferno/`: `map.json` plus a 68.8 MiB
 indexed binary `map.cs2map` (1,496,696 vertices; 2,709,353 triangles). Metadata
@@ -78,11 +128,16 @@ checked before browser loading. A fingerprint of importer source, game version,
 map and shared-VPK sizes/timestamps avoids repeat conversion; `--force` rebuilds.
 The browser caches its BVH in IndexedDB keyed by binary hash and library versions.
 Cache/quota failure still permits uncached operation. Delete site storage to reset.
+Local render resources use private HTTP revalidation, so an unchanged browser
+reload can reuse the downloaded files; decoded render geometry is rebuilt.
 
-The dedicated loopback Vite server exposes exactly the two package filenames at
-`/local/`; it never uploads them. POC build output is ignored `.local/cs2-build/`.
+The dedicated loopback Vite server exposes the collision/render manifests, map
+binary and confined `render/` glTF/binary/PNG filenames at `/local/`; it never
+uploads them. POC build output is ignored `.local/cs2-build/`.
 Neither that build nor the map is added to the existing Pages build or precache.
 Do not copy game packages, screenshots, or generated exports into public files.
+Stop the CS2 dev server before rebuilding an existing map package: on Windows,
+the server can hold exported buffers open. Ordinary launches reuse prepared data.
 
 ## Accuracy boundary
 
@@ -106,8 +161,10 @@ and inconsistent geometry return indeterminate. Physical thickness is separate
 from this estimate; no pose, hitbox, hitgroup, armor, spread, ricochet, or breakage
 effects are included.
 
-No CS2 session was running during verification. No offline comparison was
-performed and no exact game damage or penetration success is claimed.
+No CS2 session was controlled during verification. The user's offline screenshot
+shows plaster penetration and 48.9 cm thickness, consistent with the reported
+19.25 Source-unit interval at 2.54 cm/unit. Its damage differs from the surrogate.
+Exact game damage and general penetration success remain unvalidated.
 
 ## Verification and repeatable shots
 
@@ -118,14 +175,19 @@ bun run cs2:smoke             # actual local map + warm trace timing report
 bun run check:repo            # audit staged index before committing
 ```
 
-Verified October 22, 2026: **78 tests passed, 9 existing private-fixture skips**.
-The 15 new checks cover synthetic closed meshes/hulls, oblique thickness,
+Verified October 22, 2026: **96 tests passed, 9 existing private-fixture skips**.
+Collision checks cover synthetic closed meshes/hulls, oblique thickness,
 start/target-inside, misses, collision filtering, transformed planes, triangle
 material/shape identity through BVH traversal, unclosed/conflicting meshes,
 overlap union, damage falloff/budget/unknowns, malformed input, and a private
 installed-Inferno smoke test. The latter skips when no prepared local map exists.
 Existing and POC builds pass. A public-mode production build and `check:pages`
 also pass without game assets. Builds emit Vite's usual >500 kB chunk advisory.
+Ten movement checks cover continuous thin-wall collision, player-only filtering,
+corners, steps, crouch clearance, jumps, ramps, placement and an installed-Inferno
+240-tick path with player-volume checks every tick. Eight render checks cover
+coordinate restoration, resource disposal, missing/mismatched packages, compatible
+lossless compression and tight indexed-primitive bounds for frustum culling.
 
 Measured on this machine, not general benchmark promises: importer reports
 2.55 s including hashing/serialization, fingerprint cache check 107 ms; uncached
@@ -136,6 +198,15 @@ p95 0.143 ms after construction. A browser 625-cell scan took 132 ms, retaining
 296 candidates: 94 clear, 15 estimated penetration, 34 blocked, 153 indeterminate.
 Cancel was verified after one 25-cell row. T3 preview verified numeric tracing,
 floor picking, framing, scan/cancel and cached reload without console errors.
+The Inferno walking test measured mean 0.213 ms, p95 0.490 ms and maximum 2.037 ms
+per tick on this machine. Movement timing excludes drawing the render scene.
+T3 browser QA loaded all 243 textures without runtime errors, entered Walk,
+captured/released the mouse, placed a target with E, moved 42 units with the
+controller and traced back to the target (clear, 0.40 ms worker trace). Pending
+Walk startup followed immediately by Frame shot was also verified to stay in
+Orbit. Private HTTP revalidation returned 304; an escaped local asset path
+returned 404. Review captures are `.local/cs2/qa/textured-orbit.png` and
+`textured-walk.png`.
 
 ### Reported plaster shot regression
 
@@ -212,4 +283,4 @@ Local reports/captures: `.local/cs2/smoke.json`, `.local/cs2-prepare.log`,
 
 Primary parsing reference: [ValveResourceFormat](https://github.com/ValveResourceFormat/ValveResourceFormat)
 and its [map export documentation](https://s2v.app/ValveResourceFormat/guides/exporting-maps.html).
-VRF and three-mesh-bvh license notices are retained under `licenses/`.
+VRF, three-mesh-bvh and meshoptimizer license notices are retained under `licenses/`.

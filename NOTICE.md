@@ -49,6 +49,10 @@ ExternalAutoWallCS2 code is incorporated. CS2 game data and prepared collision
 packages remain in ignored local storage; they are not part of this program's
 source distribution.
 
+The optional CS2 textured-map preparation also uses meshoptimizer 1.3.0 (MIT)
+for lossless geometry compression and Three.js's bundled Meshopt decoder for
+local rendering. Its notice is retained in `licenses/MESHOPTIMIZER-LICENSE.txt`.
+
 References:
 
 - [Valve legal and trademark information](https://store.steampowered.com/legal/)
