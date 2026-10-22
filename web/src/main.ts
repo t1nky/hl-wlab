@@ -481,7 +481,6 @@ async function loadAssets(next: Assets, remember = true) {
   updatePoints();
   focus();
   $('scan').disabled = loadingScene;
-  $('place').disabled = false;
   const missing = bsp.textures.filter((t) => !t.rgba).length;
   $('assetsStatus').textContent =
     `${merged.mapName || 'Map'} ready` +
@@ -743,7 +742,6 @@ function setMode(next: Mode, fromSelection = false) {
     $(id).classList.toggle('active', id === next);
     $(id).setAttribute('aria-pressed', String(id === next));
   }
-  $('place').textContent = next === 'walk' ? 'Place target here · E' : 'Walk to place target';
   navigationHint();
   schedule();
 }
@@ -869,7 +867,7 @@ function scan() {
     workers = number('workers');
   for (const id of ['spacing', 'radius', 'armorValue'] as const) {
     if (!$(id).disabled && !$(id).checkValidity()) {
-      design.setup();
+      design.reveal($(id));
       $(id).reportValidity();
       return;
     }
@@ -1128,16 +1126,11 @@ function placeTarget() {
     $('sequence').value = String(placed.seq);
     for (const [key, value] of Object.entries(placed.options))
       control(key as ElementID).value = String(value);
-    if (updateTarget()) {
-      $('placementStatus').textContent = 'Target placed. Scan when ready.';
-      $('placementStatus').dataset.placement = JSON.stringify(placed);
-      clearError();
-    }
+    if (updateTarget()) clearError();
   } catch (e) {
     error(e);
   }
 }
-$('place').onclick = placeTarget;
 $('targetPosture').onchange = () => {
   if (!model) return;
   const previous = model.sequences[number('sequence')]?.name.startsWith('crouch'),

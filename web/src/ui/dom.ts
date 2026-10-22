@@ -29,8 +29,6 @@ const elements = {
   bookmarkRename: element('bookmarkRename', HTMLButtonElement),
   bookmarkDelete: element('bookmarkDelete', HTMLButtonElement),
   bookmarkStatus: element('bookmarkStatus', HTMLElement),
-  place: element('place', HTMLButtonElement),
-  placementStatus: element('placementStatus', HTMLElement),
   targetPosture: element('targetPosture', HTMLSelectElement),
   armor: element('armor', HTMLSelectElement),
   armorValue: element('armorValue', HTMLInputElement),

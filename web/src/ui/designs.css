@@ -196,16 +196,30 @@
   display: flex;
   flex-direction: column;
   padding: 0;
-  background: #14151a;
-  overflow: hidden;
+  gap: 12px;
+  background: transparent;
+  border: 0;
+  overflow: auto;
   min-height: 0;
+  scrollbar-width: thin;
+}
+[data-design] .design-inspector-card {
+  display: flex;
+  flex-direction: column;
+  flex: 0 1 auto;
+  min-height: 160px;
+  overflow: hidden;
+  background: #18191ff7;
+  border: 1px solid #ffffff14;
+  border-radius: 10px;
+  box-shadow: 0 8px 32px #0003;
 }
 [data-design] .design-tabs {
   display: flex;
   flex: 0 0 48px;
   border-bottom: 1px solid var(--line);
-  padding: 0 14px;
-  gap: 14px;
+  padding: 0 10px;
+  gap: 4px;
 }
 [data-design] .design-tabs button {
   position: relative;
@@ -214,7 +228,9 @@
   border-radius: 0;
   color: #92939f;
   font-size: 11px;
-  padding: 0 2px;
+  padding: 0 4px;
+  flex: 1 1 auto;
+  white-space: nowrap;
 }
 [data-design] .design-tabs button[aria-selected="true"] {
   color: #eeeef4;
@@ -230,7 +246,7 @@
   border-radius: 2px;
 }
 [data-design] .design-panel-scroll {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
   padding: 0 18px 18px;
@@ -244,29 +260,11 @@
   border: 0;
   padding-bottom: 2px;
 }
-[data-design] #place,
 [data-design] #gameFolder,
 [data-design] #libraryLoad,
 [data-design] #bookmarkSave,
 [data-design] #bookmarkLoad {
   width: 100%;
-}
-[data-design] #place {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  background: #ffffff08;
-  border-color: #ffffff1a;
-}
-[data-design] kbd {
-  font-family: inherit;
-  font-size: 10px;
-  line-height: 1.3;
-  padding: 1px 4px;
-  border: 1px solid #ffffff20;
-  border-radius: 3px;
-  color: var(--muted);
 }
 [data-design] input:user-invalid {
   border-color: #c68587;
@@ -274,10 +272,6 @@
 [data-design] #canvas:focus-visible {
   outline: 1px solid #8d87dc88;
   outline-offset: -1px;
-}
-[data-design] #placementStatus {
-  margin: 8px 0 18px;
-  color: #92939e;
 }
 [data-design] #libraryStatus,
 [data-design] #assetsStatus,
@@ -296,7 +290,8 @@
 }
 [data-design] .design-scan-dock {
   position: relative;
-  padding: 8px 12px;
+  flex: 0 0 auto;
+  padding: 12px 18px;
   background: #17181e;
   border-top: 1px solid var(--line);
 }
@@ -464,17 +459,15 @@
   font-size: 10px;
 }
 [data-design] #filters {
-  position: absolute;
-  bottom: 20px;
-  left: 20px;
-  right: 20px;
-  width: fit-content;
-  max-width: calc(100% - 40px);
-  z-index: 2;
+  position: relative;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
   background: #191a20f5;
   border: 1px solid #ffffff12;
-  padding: 8px 12px;
-  gap: 8px 14px;
+  padding: 12px;
+  gap: 10px;
   border-radius: 8px;
   box-shadow: 0 4px 24px #0003;
 }
@@ -483,12 +476,18 @@
   white-space: nowrap;
 }
 [data-design] .chips {
+  flex-direction: column;
+  align-items: stretch;
   gap: 2px;
   flex-wrap: nowrap;
 }
+[data-design] .chips + .chips {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
 [data-design] .chips > .dim {
   font-size: 10px;
-  margin-right: 4px;
+  margin: 0 6px 4px;
 }
 [data-design] .chip {
   background: transparent;
@@ -510,6 +509,7 @@
   background: #ffffff07;
 }
 [data-design] .chip b {
+  margin-left: auto;
   font-size: 9px;
   font-weight: 400;
   color: #a4a4b0;
@@ -525,13 +525,13 @@
 }
 [data-design] #filters .inline {
   display: grid;
-  grid-template-columns: max-content 88px 34px;
+  grid-template-columns: max-content minmax(0, 1fr) 34px;
   min-height: 30px;
   font-size: 10px;
   gap: 8px;
 }
 [data-design] #minDamage {
-  width: 88px;
+  width: 100%;
   margin: 0;
   padding: 0;
 }
@@ -551,16 +551,15 @@
   clip-path: inset(50%);
 }
 [data-design] #filterInfo[data-notice="true"] {
-  right: 0;
-  bottom: calc(100% + 8px);
+  position: static;
   width: auto;
   max-width: 100%;
   height: auto;
   margin: 0;
-  padding: 8px 12px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: #191a20f5;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
   white-space: normal;
   clip-path: none;
   font-size: 10px;
@@ -685,29 +684,12 @@
   top: 64px;
   left: 20px;
   width: 286px;
-  max-height: calc(100% - 198px);
-  border: 1px solid #ffffff14;
-  border-radius: 10px;
-  background: #18191ff7;
-  box-shadow: 0 8px 32px #0003;
-}
-[data-design="canvas"] .design-scan-dock {
-  position: fixed;
-  bottom: 20px;
-  left: 20px;
-  width: 286px;
-  border: 1px solid #ffffff14;
-  border-radius: 9px;
-  box-shadow: 0 8px 32px #0003;
+  max-height: calc(100% - 84px);
 }
 [data-design="canvas"] .viewbar {
   top: 64px;
   left: auto;
   right: 20px;
-}
-[data-design="canvas"] #filters {
-  left: auto;
-  max-width: calc(100% - 350px);
 }
 [data-design="canvas"] #detail {
   top: 116px;
@@ -732,9 +714,6 @@
   }
 }
 @media (max-width: 1100px) {
-  [data-design] #filters {
-    gap: 8px;
-  }
   [data-design] #detail {
     top: 76px;
   }
@@ -794,21 +773,13 @@
     max-height: none;
     margin: 0;
     border: 0;
-    border-top: 1px solid var(--line);
     border-radius: 0;
     box-shadow: none;
     display: flex;
+    padding: 12px;
   }
   [data-design] .design-panel-scroll {
     overflow: visible;
-  }
-  [data-design] .design-scan-dock,
-  [data-design="canvas"] .design-scan-dock {
-    position: relative;
-    inset: auto;
-    width: auto;
-    border-radius: 0;
-    box-shadow: none;
   }
   [data-design] .viewbar,
   [data-design="canvas"] .viewbar {
@@ -825,16 +796,6 @@
   }
   [data-design] .design-view-popover {
     max-height: calc(58dvh - 80px);
-  }
-  [data-design] #filters,
-  [data-design="canvas"] #filters {
-    left: 12px;
-    right: 12px;
-    bottom: 12px;
-    max-width: calc(100% - 24px);
-    flex-wrap: wrap;
-    width: auto;
-    padding: 8px;
   }
   [data-design] #filterInfo {
     font-size: 9px;

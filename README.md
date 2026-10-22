@@ -15,10 +15,10 @@ unaffiliated with Valve. Game parity is experimental, not certified.
 1. Choose **Half-Life folder** and select the folder containing `cstrike` and
    `valve`. Select an imported map and choose **Load map**.
 2. Choose **Walk**, click the map, move with WASD and press **E** where the
-   target should stand and face. Choose its stance, helmet and armor.
-3. Choose a weapon, spacing and radius, then **Scan positions**. AWP is the
+   target should stand and face. Set stance, helmet and armor in **Target**.
+3. In **Scan**, choose a weapon, spacing and radius, then **Scan positions**. AWP is the
    default. Halving spacing reuses aligned cached vectors.
-4. Filter wallbang/direct hits, posture and minimum damage. Select a result
+4. Use the filters below the scan button for hit type, posture and minimum damage. Select a result
    for shot details; **Walk from here** moves to the firing position.
 5. Save the map, exact view and target settings in **Bookmarks** for later.
 

@@ -3,7 +3,7 @@ import githubMark from './github.svg?raw';
 import './designs.css';
 
 type Layout = 'workbench' | 'canvas';
-type Panel = 'setup' | 'bookmarks' | 'maps';
+type Panel = 'scan' | 'target' | 'bookmarks' | 'maps';
 const requested = new URLSearchParams(location.search).get('design');
 const layout: Layout = requested === 'workbench' ? 'workbench' : 'canvas';
 const root = document.documentElement;
@@ -135,14 +135,8 @@ export const design = {
     const importDetails = required<HTMLDetailsElement>('aside details:has(#mapFile)');
     const importSummary = importDetails.querySelector('summary');
     if (importSummary) importSummary.textContent = 'Individual files & export';
-    const targetTitle = target.querySelector('h2');
-    if (targetTitle) targetTitle.textContent = 'Target';
-    $('place').classList.remove('primary');
-    $('placementStatus').textContent = 'Uses your position, facing and posture.';
     $('spacing').closest('label')?.firstChild?.replaceWith('Spacing (units)');
     $('radius').closest('label')?.firstChild?.replaceWith('Radius (units)');
-    const scanTitle = scan.querySelector('h2');
-    if (scanTitle) scanTitle.textContent = 'Scan';
     const grid = required<HTMLElement>('aside .three:has(#spacing)');
     grid.className = 'two';
     const advancedScan = node('details');
@@ -166,7 +160,8 @@ export const design = {
     tablist.setAttribute('aria-label', 'Inspector');
     const content = node('div', 'design-panel-scroll');
     for (const [id, label, children] of [
-      ['setup', 'Setup', [target, scan]],
+      ['scan', 'Scan', [scan]],
+      ['target', 'Target', [target]],
       ['bookmarks', 'Bookmarks', [bookmarks]],
       ['maps', 'Maps', [maps]],
     ] as const) {
@@ -185,7 +180,7 @@ export const design = {
       content.append(panel);
     }
     tablist.addEventListener('keydown', (e) => {
-      const ids: Panel[] = ['setup', 'bookmarks', 'maps'];
+      const ids: Panel[] = ['scan', 'target', 'bookmarks', 'maps'];
       let index = ids.indexOf(currentPanel);
       if (e.key === 'ArrowRight') index = (index + 1) % ids.length;
       else if (e.key === 'ArrowLeft') index = (index + ids.length - 1) % ids.length;
@@ -195,7 +190,11 @@ export const design = {
       e.preventDefault();
       showPanel(ids[index], true);
     });
-    aside.replaceChildren(tablist, content, dock);
+    const inspector = node('div', 'design-inspector-card');
+    inspector.append(tablist, content, dock);
+    $('filters').setAttribute('role', 'group');
+    $('filters').setAttribute('aria-label', 'Result filters');
+    aside.replaceChildren(inspector, $('filters'));
     showPanel('maps');
 
     const viewbar = required<HTMLElement>('.viewbar');
@@ -303,18 +302,23 @@ export const design = {
     empty.append(importButton, node('small', '', 'Your files stay on this device.'));
     $('viewport').append(empty);
     article.setAttribute('aria-label', '3D map workspace');
-    required<HTMLElement>(layout === 'canvas' ? 'main' : 'aside').append(dock);
     // No render loop, new WebGL context or full-canvas blur is added by either layout.
   },
   map(name: string) {
     if (!initialized) return;
     root.dataset.ready = 'true';
     mapLabel.textContent = name.replace(/\.bsp$/i, '');
-    if (!mapLoaded || currentPanel === 'maps') showPanel('setup');
+    if (!mapLoaded || currentPanel === 'maps') showPanel('scan');
     mapLoaded = true;
   },
-  setup() {
-    if (initialized) showPanel('setup');
+  reveal(control: HTMLElement) {
+    if (!initialized) return;
+    for (const [id, panel] of panels) {
+      if (panel.contains(control)) {
+        showPanel(id);
+        return;
+      }
+    }
   },
   mode(mode: 'orbit' | 'walk' | 'fly', active = false, fallback = false) {
     if (!initialized) return;
@@ -337,9 +341,6 @@ export const design = {
       mode === 'orbit'
         ? 'Middle/right drag or Shift-drag to pan. F frames target; Home fits the map. Enter and arrow keys inspect results.'
         : 'Movement pauses while using controls. Keyboard & mouse reference is in View.';
-    $('place').textContent = mode === 'walk' ? 'Place here' : 'Walk to place target';
-    if (mode === 'walk') $('place').append(node('kbd', '', 'E'));
-    $('place').title = 'Place a target at your exact body position and view angle';
   },
   cut(value: number, maximum: number) {
     if (!initialized) return;

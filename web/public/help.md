@@ -14,8 +14,9 @@ All browsers use one folder-upload flow (`webkitdirectory`). OPFS storage
 requires HTTPS or localhost. Safari is secondary.
 Individual-file import is still available under **Import / export files**.
 Choose Walk, click the map, move with WASD, look in the desired direction and press E to place
-the target. Set its stance and armor, choose a weapon, then Scan. Click a result to inspect
-damage or stand at that position.
+the target. Set stance and armor in **Target**; choose the weapon and spacing in **Scan**.
+The scan button stays at the bottom of the card, with result filters stacked below it.
+Click a result to inspect damage or stand at that position.
 
 ## Controls
 
