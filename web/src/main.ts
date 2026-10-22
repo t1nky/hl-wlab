@@ -115,6 +115,7 @@ let bsp: BSP,
   drag: { x: number; y: number } | null = null,
   worker: Worker | null = null,
   busy = false,
+  focusScanAfterStop = false,
   loadingScene = true,
   revision = 0,
   scanRevision = 0,
@@ -832,11 +833,17 @@ function progress(m: Omit<Progress, 'type'>, summary?: string) {
   window.labProgress = m;
 }
 function lockScan(active: boolean) {
+  const returnFocus =
+    !active &&
+    (document.activeElement === $('cancel') ||
+      (focusScanAfterStop && document.activeElement === document.body));
   design.scanning(active);
   busy = active;
   $('scan').disabled = active || loadingScene || !engine;
   $('cancel').disabled = !active;
   $('cancel').textContent = 'Stop';
+  if (!active) focusScanAfterStop = false;
+  if (returnFocus && !$('scan').disabled) $('scan').focus({ preventScroll: true });
   bookmarks.setScanning(active || loadingScene);
   library.setBusy(active || loadingScene);
   for (const id of ['restore', 'mapFile', 'modelFile', 'materialFile', 'snapshotFile'] as const)
@@ -852,6 +859,7 @@ function invalidateScan(message: string) {
 }
 function stopScan() {
   if (!busy) return;
+  focusScanAfterStop = document.activeElement === $('cancel');
   worker?.postMessage({ type: 'cancel' });
   $('cancel').disabled = true;
   $('cancel').textContent = 'Stopping…';

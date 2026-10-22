@@ -37,6 +37,7 @@ let mapLoaded = false;
 let cutValue: HTMLOutputElement;
 let viewSummary: HTMLElement;
 let resetFilters: HTMLButtonElement;
+let stopSlot: HTMLDivElement;
 const referenceRows: { modes: string; term: HTMLElement; description: HTMLElement }[] = [];
 const panels = new Map<Panel, HTMLElement>();
 const tabs = new Map<Panel, HTMLButtonElement>();
@@ -147,6 +148,11 @@ export const design = {
 
     const dock = node('div', 'design-scan-dock');
     const scanActions = $('scan').parentElement;
+    stopSlot = node('div', 'design-stop-slot');
+    stopSlot.inert = true;
+    stopSlot.setAttribute('aria-hidden', 'true');
+    $('cancel').before(stopSlot);
+    stopSlot.append($('cancel'));
     if (scanActions) dock.append(scanActions);
     dock.append($('progress'), $('progressText'));
     $('progress').setAttribute('aria-label', 'Scan progress');
@@ -355,7 +361,10 @@ export const design = {
   },
   scanning(active: boolean) {
     if (!initialized) return;
+    $('scan').style.setProperty('--scan-progress', '0');
     root.dataset.scanning = String(active);
+    stopSlot.inert = !active;
+    stopSlot.setAttribute('aria-hidden', String(!active));
     $('scan').textContent = active ? 'Scanning…' : 'Scan positions';
     $('scan').setAttribute('aria-busy', String(active));
     if (active) $('progressText').textContent = 'Preparing scan…';
@@ -367,7 +376,9 @@ export const design = {
         ? `${phase === 'Complete' ? 'Scan complete' : 'Stopped'} · ${seconds.toFixed(2)} s`
         : `${phase}${total ? ` · ${Math.floor((done / total) * 100)}%` : ''}${eta ? ` · ~${eta.toFixed(0)} s left` : ''}`;
     if (root.dataset.scanning === 'true') {
-      $('scan').textContent = total ? `Scanning ${Math.floor((done / total) * 100)}%` : 'Scanning…';
+      const fraction = total > 0 ? Math.max(0, Math.min(1, done / total)) : 0;
+      $('scan').style.setProperty('--scan-progress', String(fraction));
+      $('scan').textContent = total ? `Scanning ${Math.floor(fraction * 100)}%` : 'Scanning…';
     }
   },
   results(count: number) {

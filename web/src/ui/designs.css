@@ -296,11 +296,77 @@
   border-top: 1px solid var(--line);
 }
 [data-design] .design-scan-dock .buttons {
-  flex-wrap: nowrap;
+  --scan-color: #8d87dc;
+  --scan-track: color-mix(in srgb, var(--scan-color) 38%, #17181e);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 0px;
+  gap: 0;
+  transition:
+    grid-template-columns 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    column-gap 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+[data-design]:where([data-scanning="true"]) .design-scan-dock .buttons {
+  grid-template-columns: minmax(0, 1fr) 76px;
+  column-gap: 6px;
 }
 [data-design] #scan {
-  flex: 1;
+  position: relative;
+  isolation: isolate;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: none;
 }
+[data-design] #scan::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--scan-color);
+  transform: scaleX(0);
+  transform-origin: left;
+}
+[data-design][data-scanning="true"] #scan {
+  background: var(--scan-track);
+  opacity: 1;
+}
+[data-design][data-scanning="true"] #scan::before {
+  transform: scaleX(var(--scan-progress, 0));
+  transition: transform 160ms linear;
+}
+[data-design] .design-stop-slot {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  visibility: hidden;
+  transition: visibility 0s 240ms;
+}
+[data-design][data-scanning="true"] .design-stop-slot {
+  visibility: visible;
+  transition-delay: 0s;
+}
+[data-design] #cancel {
+  flex: 1;
+  min-width: 0;
+  padding-inline: 0;
+  background: var(--scan-track);
+  border-color: #ffffff08;
+  white-space: nowrap;
+  opacity: 0;
+  transition:
+    opacity 120ms,
+    background-color 100ms;
+}
+[data-design][data-scanning="true"] #cancel {
+  opacity: 1;
+}
+[data-design][data-scanning="true"] #cancel:hover {
+  background: color-mix(in srgb, var(--scan-color) 50%, #17181e);
+}
+[data-design][data-scanning="true"] #cancel:disabled {
+  color: var(--muted);
+}
+[data-design] #progress,
 [data-design] #progressText {
   position: absolute;
   min-height: 0;
@@ -312,19 +378,6 @@
   overflow: hidden;
   white-space: nowrap;
   clip-path: inset(50%);
-}
-[data-design] #progress {
-  position: absolute;
-  left: 12px;
-  bottom: 3px;
-  width: calc(100% - 24px);
-  margin: 0;
-  display: block;
-  height: 2px;
-}
-[data-design][data-scanning="false"] #cancel,
-[data-design][data-scanning="false"] #progress {
-  display: none;
 }
 [data-design] article {
   position: relative;
@@ -709,7 +762,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  [data-design] button {
+  [data-design] button,
+  [data-design][data-scanning] #cancel,
+  [data-design][data-scanning] #scan::before,
+  [data-design] .design-scan-dock .buttons,
+  [data-design] .design-stop-slot {
     transition: none;
   }
 }
