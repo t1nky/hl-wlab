@@ -1,8 +1,7 @@
 import {
-  BatchedMesh,
   Box3,
   BufferAttribute,
-  BufferGeometry,
+  type BufferGeometry,
   Group,
   LoadingManager,
   type Material,
@@ -11,7 +10,7 @@ import {
   type MeshStandardMaterial,
   type Plane,
   Sphere,
-  Texture,
+  type Texture,
   Vector2,
   Vector3,
 } from 'three';
@@ -21,8 +20,10 @@ import { packageBase } from './package';
 import { type batchStaticMap, batchStaticMapAsync } from './render-batches';
 import { decodeRenderViews, type RenderDecodeTimings } from './render-decode';
 import { type IrradianceMetadata, loadIrradiance } from './render-irradiance';
+import { abortableRender, trackRenderParser } from './render-loader';
 import { type Cs2Mask, loadMaterialMask } from './render-masks';
 import { type Cs2Material, diffuseMaterial } from './render-materials';
+import { RenderResources } from './render-resources';
 import { yieldRenderTask } from './render-schedule';
 import { hasSunBinding, loadSunVisibility, type SunLighting, type SunMetadata } from './render-sun';
 
@@ -110,46 +111,12 @@ export function tightenPrimitiveBounds(geometry: BufferGeometry): boolean {
 
 /** Frees shared geometry/material/texture resources once, including ImageBitmap CPU storage. */
 export function disposeRenderGroup(group: Group): void {
-  const geometries = new Set<Mesh['geometry']>();
-  const materials = new Set<Material>();
-  const textures = new Set<Texture>();
-  if (group.userData.cs2SunTexture instanceof Texture) textures.add(group.userData.cs2SunTexture);
-  if (group.userData.cs2IrradianceTexture instanceof Texture)
-    textures.add(group.userData.cs2IrradianceTexture);
-  for (const texture of group.userData.cs2MaskTextures ?? [])
-    if (texture instanceof Texture) textures.add(texture);
-  const batches = new Set<BatchedMesh>();
-  group.traverse((object) => {
-    if (!(object instanceof Mesh)) return;
-    geometries.add(object.geometry);
-    if (object instanceof BatchedMesh) batches.add(object);
-    for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
-      materials.add(material);
-      for (const value of Object.values(material))
-        if (value instanceof Texture) textures.add(value);
-      for (const value of material.userData.cs2Textures ?? [])
-        if (value instanceof Texture) textures.add(value);
-      for (const value of material.userData.cs2Masks ?? [])
-        if (value instanceof Texture) textures.add(value);
-      if (material.userData.cs2Sun?.texture instanceof Texture)
-        textures.add(material.userData.cs2Sun.texture);
-      if (material.userData.cs2Sun?.irradiance?.texture instanceof Texture)
-        textures.add(material.userData.cs2Sun.irradiance.texture);
-    }
-  });
-  const images = new Set<ImageBitmap>();
-  for (const texture of textures) {
-    const image = texture.source.data;
-    if (typeof ImageBitmap !== 'undefined' && image instanceof ImageBitmap) images.add(image);
-    texture.dispose();
-  }
-  for (const image of images) image.close();
-  for (const batch of batches) {
-    geometries.delete(batch.geometry);
-    batch.dispose();
-  }
-  for (const material of materials) material.dispose();
-  for (const geometry of geometries) geometry.dispose();
+  const resources = new RenderResources();
+  resources.object(group);
+  resources.dispose();
+  clearRenderGroup(group);
+}
+function clearRenderGroup(group: Group) {
   group.removeFromParent();
   group.clear();
   delete group.userData.cs2SunTexture;
@@ -168,11 +135,11 @@ export async function loadRenderMap(
     mapId?: string;
   } = {},
 ): Promise<RenderMap> {
-  const { clippingPlanes = [], onProgress, signal } = options;
+  const { clippingPlanes = [], onProgress, signal: parentSignal } = options;
   const base = packageBase(options.mapId);
   const started = performance.now();
   onProgress?.('Reading private textured-map manifest…');
-  const response = await fetch(`${base}render.json`, { signal, cache: 'no-store' });
+  const response = await fetch(`${base}render.json`, { signal: parentSignal, cache: 'no-store' });
   if (!response.ok)
     throw Error(
       'Textured map unavailable. Run bun run cs2:prepare --render, then load textures again.',
@@ -187,6 +154,9 @@ export async function loadRenderMap(
   )
     throw Error('Texture/collision packages differ. Run bun run cs2:prepare --render again.');
   const group = new Group();
+  const resources = new RenderResources();
+  const controller = new AbortController();
+  const signal = controller.signal;
   group.name = 'CS2 render geometry (display only)';
   group.matrixAutoUpdate = false;
   group.matrix.copy(sourceTransform(metadata.gltfToSource));
@@ -198,9 +168,9 @@ export async function loadRenderMap(
     let request = maskRequests.get(mask.file);
     if (!request) {
       request = loadMaterialMask(mask, version, signal, base).then((texture) => {
+        resources.texture(texture);
         // Other in-flight masks can finish after a sibling load has failed.
         if (disposed) {
-          texture.dispose();
           throw new DOMException('Map load cancelled', 'AbortError');
         }
         maskTextures.add(texture);
@@ -218,12 +188,14 @@ export async function loadRenderMap(
   manager.setURLModifier(
     (url) => `${url}${url.includes('?') ? '&' : '?'}v=${encodeURIComponent(version)}`,
   );
-  manager.onProgress = (_url, loaded, total) =>
-    onProgress?.(`Loading textured map resources ${loaded}/${total}…`);
+  manager.onProgress = (_url, loaded, total) => {
+    if (!disposed) onProgress?.(`Loading textured map resources ${loaded}/${total}…`);
+  };
   const loader = new GLTFLoader(manager);
   let chunkUrl = '';
   const decodes: RenderDecodeTimings[] = [];
   loader.register((parser) => {
+    trackRenderParser(parser, manager, signal, resources);
     const views = parser.json.bufferViews ?? [];
     const supported =
       typeof Worker !== 'undefined' &&
@@ -290,11 +262,18 @@ export async function loadRenderMap(
   });
   loader.setMeshoptDecoder(MeshoptDecoder);
   const dispose = () => {
+    if (disposed) return;
     disposed = true;
-    disposeRenderGroup(group);
+    parentSignal?.removeEventListener('abort', dispose);
+    controller.abort(parentSignal?.reason ?? new DOMException('Map closed', 'AbortError'));
+    resources.object(group);
+    resources.dispose();
+    clearRenderGroup(group);
     maskTextures.clear();
     maskRequests.clear();
   };
+  parentSignal?.addEventListener('abort', dispose, { once: true });
+  if (parentSignal?.aborted) dispose();
   const bounds = { geometryCount: 0, shrunkCount: 0, precomputedCount: 0, ms: 0 };
   const timings = {
     resourcesMs: 0,
@@ -304,13 +283,14 @@ export async function loadRenderMap(
     sunMs: 0,
     irradianceMs: 0,
   };
-  const pendingMaterials = new Set<Material>();
   let sun: SunLighting | undefined;
   try {
+    signal.throwIfAborted();
     if (options.sunShadows !== false) {
       if (metadata.sunShadows) {
         const sunStarted = performance.now();
         sun = await loadSunVisibility(metadata.sunShadows, version, signal, base);
+        resources.texture(sun.texture);
         timings.sunMs = performance.now() - sunStarted;
         group.userData.cs2SunTexture = sun.texture;
       }
@@ -318,6 +298,7 @@ export async function loadRenderMap(
         sun ??= { scale: new Vector2(...metadata.irradiance.uvScale), enabled: { value: 1 } };
         const irradianceStarted = performance.now();
         sun.irradiance = await loadIrradiance(metadata.irradiance, version, signal, base);
+        resources.texture(sun.irradiance.texture);
         timings.irradianceMs = performance.now() - irradianceStarted;
         group.userData.cs2IrradianceTexture = sun.irradiance.texture;
       }
@@ -330,7 +311,17 @@ export async function loadRenderMap(
       signal?.throwIfAborted();
       chunkUrl = new URL(`${base}${chunk}`, window.location.href).href;
       const resourcesStart = performance.now();
-      const gltf = await loader.loadAsync(`${base}${chunk}`);
+      const chunkResponse = await fetch(manager.resolveURL(`${base}${chunk}`), { signal });
+      if (!chunkResponse.ok) throw Error('Missing private render chunk');
+      const json = await chunkResponse.text();
+      signal.throwIfAborted();
+      const gltf = await abortableRender(
+        loader.parseAsync(json, new URL('.', chunkUrl).href).then((gltf) => {
+          resources.object(gltf.scene);
+          return gltf;
+        }),
+        signal,
+      );
       timings.resourcesMs += performance.now() - resourcesStart;
       group.add(gltf.scene);
       signal?.throwIfAborted();
@@ -382,7 +373,7 @@ export async function loadRenderMap(
             lit ? sun : undefined,
             masks,
           );
-          pendingMaterials.add(material);
+          resources.material(material);
           material.clippingPlanes = clippingPlanes;
           variants.set(lit, material);
         }
@@ -445,12 +436,13 @@ export async function loadRenderMap(
       }
       for (const geometry of bounded) geometry.deleteAttribute('_cs2_light_uv');
       for (const source of sources) source.dispose();
-      pendingMaterials.clear();
       timings.materialsMs += performance.now() - materialsStart;
     }
     group.updateMatrixWorld(true);
     metadata.runtimeBounds = bounds;
     if (options.batch !== false) metadata.runtimeBatches = await batchStaticMapAsync(group, signal);
+    signal.throwIfAborted();
+    resources.retain(group);
     timings.totalMs = performance.now() - started;
     metadata.runtimeLoad = timings;
     metadata.runtimeDecode = decodes;
@@ -459,9 +451,6 @@ export async function loadRenderMap(
     );
     return { group, metadata, dispose };
   } catch (error) {
-    // A cancellation can happen between conversion and attachment to a mesh.
-    // Include those materials in the same deduplicated disposal traversal.
-    if (pendingMaterials.size) group.add(new Mesh(new BufferGeometry(), [...pendingMaterials]));
     dispose();
     throw error;
   }

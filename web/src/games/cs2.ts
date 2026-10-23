@@ -78,11 +78,13 @@ export class Cs2Game implements GameAnalysis {
       if (reply.kind === 'error') request?.reject(Error(reply.error));
       else request?.resolve(reply);
     };
-    this.worker.onerror = (event) => {
-      for (const request of this.pending.values()) request.reject(Error(event.message));
+    const workerError = (message: string) => {
+      for (const request of this.pending.values()) request.reject(Error(message));
       this.pending.clear();
-      if (!this.disposed) error(Error(event.message));
+      if (!this.disposed) error(Error(message));
     };
+    this.worker.onerror = (event) => workerError(event.message);
+    this.worker.onmessageerror = () => workerError('CS2 worker message could not be decoded');
     this.movement = new AsyncMovement(
       async (dt, input, yaw) =>
         required(
@@ -121,10 +123,23 @@ export class Cs2Game implements GameAnalysis {
     const id = ++this.sequence;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      this.worker.postMessage({ id, ...op });
+      try {
+        this.worker.postMessage({ id, ...op });
+      } catch (error) {
+        this.pending.delete(id);
+        reject(error);
+      }
     });
   }
   async load(progress: (message: string) => void) {
+    try {
+      await this.loadMap(progress);
+    } catch (error) {
+      this.dispose();
+      throw error;
+    }
+  }
+  private async loadMap(progress: (message: string) => void) {
     progress('Loading CS2 physics and cached BVH…');
     const reply = await this.request({ op: 'load', includeBuffer: false, mapId: this.mapId });
     this.meta = required(reply.meta);
@@ -146,20 +161,23 @@ export class Cs2Game implements GameAnalysis {
     });
     if (!playerResponse.ok)
       throw Error('Prepare real player poses first: bun run cs2:prepare:player');
-    this.player = await playerResponse.json();
+    const player = await playerResponse.json();
+    this.abort.signal.throwIfAborted();
+    this.player = player;
     if (this.player.steamInf !== this.meta.steamInf)
       throw Error('Player/map versions differ; prepare both from the current installation');
     this.timing = { loadMs: reply.loadMs, buildMs: reply.buildMs, cached: reply.cached };
-    this.render = await loadRenderMap({
+    const render = await loadRenderMap({
       signal: this.abort.signal,
       collisionFingerprint: this.meta.fingerprint,
       onProgress: progress,
       mapId: this.mapId,
     });
     if (this.disposed) {
-      this.render.dispose();
+      render.dispose();
       throw Error('CS2 map closed');
     }
+    this.render = render;
     this.group.add(this.render.group);
     this.bounds.setFromObject(this.render.group);
     const spawn = this.meta.spawns[0]?.origin;
@@ -173,13 +191,18 @@ export class Cs2Game implements GameAnalysis {
   }
   async startWalk(eye: V3, resume = false, crouched = false) {
     this.movement.pause();
-    if (!resume || !this.state)
-      this.state = required((await this.request({ op: 'walk-start', eye, crouched })).state);
+    if (!resume || !this.state) {
+      const state = required((await this.request({ op: 'walk-start', eye, crouched })).state);
+      this.abort.signal.throwIfAborted();
+      this.state = state;
+    }
     return required(this.state);
   }
   async deploy(eye: V3) {
     this.movement.pause();
-    this.state = required((await this.request({ op: 'walk-deploy', eye })).state);
+    const state = required((await this.request({ op: 'walk-deploy', eye })).state);
+    this.abort.signal.throwIfAborted();
+    this.state = state;
     return this.state;
   }
   async trace(source: V3, target = this.target) {
@@ -267,6 +290,7 @@ export class Cs2Game implements GameAnalysis {
         settings,
         pose: this.targetPose,
       });
+      this.abort.signal.throwIfAborted();
       this.rows = required(reply.rows);
       const stats = required(reply.stats);
       return {
@@ -290,7 +314,9 @@ export class Cs2Game implements GameAnalysis {
         if (!('map' in material)) continue;
         if (!Object.hasOwn(material.userData, 'displayTexture'))
           material.userData.displayTexture = material.map;
-        material.map = enabled ? material.userData.displayTexture : null;
+        const map = enabled ? material.userData.displayTexture : null;
+        if (material.map === map) continue;
+        material.map = map;
         material.needsUpdate = true;
       }
     });
@@ -313,13 +339,21 @@ export class Cs2Game implements GameAnalysis {
     ].join('\n');
   }
   dispose() {
+    if (this.disposed) return;
     this.disposed = true;
     this.movement.pause();
     this.abort.abort();
     this.worker.terminate();
+    this.worker.onmessage = null;
+    this.worker.onerror = null;
+    this.worker.onmessageerror = null;
     for (const request of this.pending.values()) request.reject(Error('CS2 map closed'));
     this.pending.clear();
     this.render?.dispose();
+    this.render = undefined;
+    this.rows = new Float32Array();
+    this.scanProgress = undefined;
+    this.targetPose = undefined;
     this.group.removeFromParent();
     this.group.clear();
   }

@@ -92,6 +92,26 @@ loader now handle indirect lighting independently, so an unsupported or missing 
 atlas cannot suppress a valid indirect bake. Loading a map revalidates the importer
 fingerprint and rebuilds an outdated local package when its game files are available.
 
+The resource-lifetime audit covers map switching, cancelled loads, stopped scans
+and repeated View changes. A load owns image bitmaps, textures, materials and
+geometry before scene attachment, aborts its image/buffer fetches and decoder,
+and closes late results. After batching it releases original geometry and retains
+only final scene resources. Hidden textures still belong to the loaded map and
+are disposed on unload. Closed backends reject pending requests and cannot accept
+late scan rows or render results. GoldSrc releases the previous walker's WASM
+engine when replacing its map. Renderer draw lists are cleared when a CS2 map
+closes so they cannot retain its geometry throughout the replacement load.
+
+The local Windows browser test previously left **65 GPU textures** undisposed and
+**242 decoded bitmaps** unclosed after hiding Dust2 textures and switching away.
+After the fix, six switch cycles across Dust2, Mirage and Inferno returned to the
+same baseline (84 GPU textures, 86 geometries); all **1,623 bitmaps** closed and
+JS heap settled near **58 MB**. Cancelled image-stage loads and stopped scans were
+also exercised. These are browser resource counts/JS heap observations, not exact
+process RAM or driver VRAM measurements. Texture storage and collision data stay
+cached while their map is loaded; placement caches are capped at 65,536 columns
+per scan worker, and warm scan workers remain available until their map closes.
+
 For reproducible scan comparisons, run from the repository:
 
 ```powershell

@@ -129,15 +129,24 @@ export class GoldsrcAnalysis implements GameAnalysis {
     });
     this.worker = worker;
     return new Promise((resolve, reject) => {
+      let finished = false;
       const finish = () => {
+        if (finished) return false;
+        finished = true;
         worker.terminate();
+        worker.onmessage = worker.onerror = worker.onmessageerror = null;
         if (this.worker === worker) this.worker = undefined;
+        return true;
       };
       worker.onerror = (event) => {
-        finish();
+        if (!finish()) return;
         reject(Error(event.message));
       };
+      worker.onmessageerror = () => {
+        if (finish()) reject(Error('Scan worker message could not be decoded'));
+      };
       worker.onmessage = ({ data: m }: MessageEvent<ScanResponse>) => {
+        if (finished) return;
         if (m.type === 'progress')
           progress({
             phase: m.phase,
@@ -162,18 +171,22 @@ export class GoldsrcAnalysis implements GameAnalysis {
           });
         }
       };
-      worker.postMessage({
-        type: 'scan',
-        map: required(context.assets.map),
-        brushes: context.bsp.brushes,
-        materials: required(context.assets.materials),
-        modelHash: context.modelHash,
-        pose: required(this.nativePose),
-        expansion: this.expansion,
-        target: required(this.targetPose).origin,
-        ...settings,
-        weapon: context.weapon,
-      } satisfies ScanRequest);
+      try {
+        worker.postMessage({
+          type: 'scan',
+          map: required(context.assets.map),
+          brushes: context.bsp.brushes,
+          materials: required(context.assets.materials),
+          modelHash: context.modelHash,
+          pose: required(this.nativePose),
+          expansion: this.expansion,
+          target: required(this.targetPose).origin,
+          ...settings,
+          weapon: context.weapon,
+        } satisfies ScanRequest);
+      } catch (error) {
+        if (finish()) reject(error);
+      }
     });
   }
 }

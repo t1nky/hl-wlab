@@ -41,6 +41,42 @@ const settings: Cs2Material = {
 };
 
 describe('CS2 render optimization correctness', () => {
+  it('guards map-dependent tint code when the Textures toggle removes the base map', () => {
+    const input = new MeshStandardMaterial({ map: new Texture() });
+    const tinted: Cs2Material = {
+      ...settings,
+      tint: {
+        amount: 1,
+        material: [1, 1, 1],
+        base: { enabled: true, contrast: 1, brightness: 1, vertexColorMode: 0 },
+      },
+    };
+    const material = diffuseMaterial(input, tinted);
+    material.map = null;
+    material.userData.cs2TexturesEnabled.value = 0;
+    const shader = {
+      vertexShader: ShaderLib.lambert.vertexShader,
+      fragmentShader: ShaderLib.lambert.fragmentShader,
+      uniforms: {},
+    } as WebGLProgramParametersWithUniforms;
+    material.onBeforeCompile(shader, {} as WebGLRenderer);
+    const guard = shader.fragmentShader.indexOf('#ifdef USE_MAP');
+    const sample = shader.fragmentShader.indexOf('cs2TintLayer(sampledDiffuseColor');
+    expect(guard).toBeGreaterThan(0);
+    expect(sample).toBeGreaterThan(guard);
+    let depth = 0,
+      end = -1;
+    for (const match of shader.fragmentShader
+      .slice(guard)
+      .matchAll(/#if(?:def|ndef)?\b|#endif\b/g)) {
+      depth += match[0] === '#endif' ? -1 : 1;
+      if (!depth) {
+        end = guard + (match.index ?? 0);
+        break;
+      }
+    }
+    expect(end).toBeGreaterThan(sample);
+  });
   it('keeps object tint separate from paint and uses shared R8 masks with source-alpha affine correction', () => {
     const correction = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0.6, 0.55, 0.44, 1];
     const tint = {

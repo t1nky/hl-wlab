@@ -238,7 +238,7 @@ ${shader.fragmentShader}`;
     );
     shader.fragmentShader = shader.fragmentShader.replace(
       '#include <map_fragment>',
-      `#include <map_fragment>\n${settings.tint ? 'diffuseColor = vec4(1.0, 1.0, 1.0, opacity);' : ''}\nif (cs2TexturesEnabled > 0.5) { ${fragment} }`,
+      `#include <map_fragment>\n#ifdef USE_MAP\n${settings.tint ? 'diffuseColor = vec4(1.0, 1.0, 1.0, opacity);' : ''}\nif (cs2TexturesEnabled > 0.5) { ${fragment} }\n#endif`,
     );
   };
   material.customProgramCacheKey = () =>

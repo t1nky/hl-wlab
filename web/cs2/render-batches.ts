@@ -58,7 +58,7 @@ function* prepareStaticMap(group: Group) {
       shader: material.customProgramCacheKey(),
       tint: material.userData.cs2?.tint,
       masks: material.userData.cs2Masks?.map((texture: { uuid: string }) => texture.uuid),
-      sun: material.userData.cs2Sun?.texture.uuid,
+      sun: material.userData.cs2Sun?.texture?.uuid,
       irradiance: material.userData.cs2Sun?.irradiance?.texture.uuid,
       lightingMode: material.userData.cs2LightingMode,
       clipping: material.clippingPlanes?.map((p) => [...p.normal.toArray(), p.constant]),

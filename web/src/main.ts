@@ -1,5 +1,6 @@
 import type { Engine } from './engine/engine.ts';
 import type { Assets, Brush, BSP, Pose, Progress, Skybox, Target } from './engine/types.ts';
+import { required } from './engine/types.ts';
 import { FrameLimiter } from './render/frame-rate.ts';
 import { CS2_BACKGROUND } from './render/lighting.ts';
 import { createPointMaterial, updatePointGeometry } from './render/points.ts';
@@ -58,7 +59,7 @@ const damageView = () => ({
   aimPoint: selectedAimPoint(),
 });
 const hasMap = () => !!cs2?.render || (!cs2 && !!engine);
-const activeWalker = () => cs2?.walker ?? walker;
+const activeWalker = () => cs2?.walker ?? required(walker);
 
 const canvas = $('canvas');
 const HINTS = {
@@ -115,7 +116,7 @@ let bsp: BSP,
   selection: number | null = null,
   selectionLine: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial> | null,
   mode: Mode = 'fly',
-  walker: Walker,
+  walker: Walker | undefined,
   crouchToggle = false,
   walkPaused = false,
   navigationActive = false,
@@ -490,6 +491,7 @@ async function loadAssets(next: Assets, remember = true) {
   bsp = parsed;
   model = mdl;
   engine = eng;
+  walker = undefined; // The previous walker owns its previous map's WASM engine.
   engine.setWeapon(selectedWeapon());
   assetSet = merged;
   modelHash = await hash(merged.model);
@@ -1120,6 +1122,7 @@ async function switchGame(next: string, mapId?: string) {
   clearSelection();
   rows = new Float32Array();
   bookmarks.setReady(false);
+  goldsrc.clearSamples();
   $('progress').value = 0;
   if (next === 'cs2') {
     if (!cs2)
@@ -1140,6 +1143,9 @@ async function switchGame(next: string, mapId?: string) {
       if (id) await library.prepareCs2(id);
       const { Cs2Game } = await import('./games/cs2');
       previous?.dispose();
+      // Draw lists retain the last frame's geometry until another frame renders.
+      // Drop them before allocating the replacement map, not after its load.
+      renderer.renderLists.dispose();
       const game = new Cs2Game(schedule, error, id || 'de_inferno');
       cs2 = game;
       if (!id) {
@@ -1190,6 +1196,7 @@ async function switchGame(next: string, mapId?: string) {
         window.labReady = true;
       } else {
         cs2?.dispose();
+        renderer.renderLists.dispose();
         cs2 = undefined;
         restoreOriginalGame();
       }
@@ -1197,6 +1204,7 @@ async function switchGame(next: string, mapId?: string) {
     }
   } else {
     cs2?.dispose();
+    renderer.renderLists.dispose();
     cs2 = undefined;
     restoreOriginalGame();
   }
@@ -1897,7 +1905,7 @@ declare global {
       pose: Pose;
       rows: Float32Array;
       shown: Uint8Array;
-      walker: Walker;
+      walker: Walker | undefined;
       camera: THREE.PerspectiveCamera;
     };
   }
