@@ -12,6 +12,8 @@ export function disposeGroup(group: THREE.Group) {
       materials.add(m);
       for (const value of Object.values(m)) if (value instanceof THREE.Texture) textures.add(value);
       if (m.userData.texture instanceof THREE.Texture) textures.add(m.userData.texture);
+      if (m.userData.displayLightMap instanceof THREE.Texture)
+        textures.add(m.userData.displayLightMap);
     }
   });
   for (const texture of textures) texture.dispose();

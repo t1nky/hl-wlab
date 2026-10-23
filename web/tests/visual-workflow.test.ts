@@ -5,6 +5,7 @@ import { cs2Lighting } from '../src/render/lighting';
 import { updatePointGeometry } from '../src/render/points';
 import { viewPixelRatio } from '../src/render/quality';
 import { disposeGroup } from '../src/render/resources';
+import { setMapShadows } from '../src/render/shadows';
 
 test('point reclassification reuses GPU attributes/bounds; changed scan source refreshes spatial data', () => {
   const data = {
@@ -78,6 +79,11 @@ test('mode-switch disposal frees nested/shared lightmap and hidden albedo once',
     counts.set(object, 0);
     object.addEventListener('dispose', () => counts.set(object, (counts.get(object) ?? 0) + 1));
   }
+  setMapShadows(group, false);
+  assert.equal(material.lightMap, null);
+  setMapShadows(group, true);
+  assert.strictEqual(material.lightMap, lightMap);
+  setMapShadows(group, false);
   disposeGroup(group);
   assert.deepEqual([...counts.values()], [1, 1, 1, 1]);
   assert.equal(group.children.length, 0);

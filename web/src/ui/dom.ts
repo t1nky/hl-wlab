@@ -71,6 +71,7 @@ const elements = {
   cut: element('cut', HTMLInputElement),
   xray: element('xray', HTMLInputElement),
   textures: element('textures', HTMLInputElement),
+  shadows: element('shadows', HTMLInputElement),
   sky: element('sky', HTMLInputElement),
   viewport: element('viewport', HTMLElement),
   canvas: element('canvas', HTMLCanvasElement),

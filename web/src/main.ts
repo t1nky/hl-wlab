@@ -4,6 +4,7 @@ import { CS2_BACKGROUND } from './render/lighting.ts';
 import { createPointMaterial, updatePointGeometry } from './render/points.ts';
 import { viewPixelRatio } from './render/quality.ts';
 import { disposeGroup } from './render/resources.ts';
+import { setMapShadows } from './render/shadows.ts';
 import type { BookmarkState } from './storage/bookmarks.ts';
 import { assetRecord, hydrateMapTextures, loadLibraryAssets } from './storage/game-library.ts';
 import type { LibraryMapRef } from './storage/library-types.ts';
@@ -226,6 +227,11 @@ function renderMap() {
       anisotropy: Math.min(8, renderer.capabilities.getMaxAnisotropy()),
     }),
   );
+  showShadows();
+  schedule();
+}
+function showShadows() {
+  setMapShadows(cs2?.group ?? mapGroup, $('shadows').checked);
   schedule();
 }
 function showSky() {
@@ -843,10 +849,10 @@ function finishMode(next: Mode) {
   schedule();
 }
 function applyGameView() {
-  // One shared renderer. CS2 retains the POC's bounded walking draw distance and pixel budget.
-  camera.far = cs2 && mode === 'walk' ? 2000 : 40000;
+  // Keep distant sightlines visible in Walk; raster cost stays bounded by the pixel budget.
+  camera.far = cs2 && mode === 'walk' ? 8192 : 40000;
   camera.updateProjectionMatrix();
-  scene.fog = cs2 && mode === 'walk' ? new THREE.Fog(CS2_BACKGROUND, 1500, 2000) : null;
+  scene.fog = cs2 && mode === 'walk' ? new THREE.Fog(CS2_BACKGROUND, 6553.6, 8192) : null;
   scene.background = cs2 ? new THREE.Color(CS2_BACKGROUND) : $('sky').checked ? skyTexture : null;
   sizeViewport();
 }
@@ -1155,6 +1161,7 @@ async function switchGame(next: string) {
       scene.add(game.group);
       applyGameView();
       game.textures($('textures').checked);
+      showShadows();
       poseUI(game.poseChoices);
       $('cut').min = String(Math.floor(game.bounds.min.z) - 1);
       $('cut').max = String(Math.ceil(game.bounds.max.z) + 1);
@@ -1396,6 +1403,7 @@ $('textures').onchange = () => {
   }
   schedule();
 };
+$('shadows').onchange = showShadows;
 for (const id of ['orbit', 'walk', 'fly'] as const) $(id).onclick = () => setMode(id);
 $('overview').onclick = () => {
   if (cs2) {

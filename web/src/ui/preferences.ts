@@ -11,6 +11,7 @@ export const PREFS = [
   'minDamage',
   'xray',
   'textures',
+  'shadows',
   'sky',
   'workers',
 ] as const;

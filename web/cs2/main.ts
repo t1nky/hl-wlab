@@ -207,7 +207,7 @@ const walking = createWalkControls({
 function applyRenderSettings(walk = walking.active) {
   const detail = element<HTMLSelectElement>('quality').value === 'detail';
   renderer.setPixelRatio(Math.min(devicePixelRatio, detail ? 1.5 : software ? 0.75 : 1));
-  camera.far = walk ? (detail ? 6000 : 2000) : 40000;
+  camera.far = walk ? 8192 : 40000;
   camera.updateProjectionMatrix();
   const fog = scene.fog as Fog;
   fog.near = camera.far * 0.8;
