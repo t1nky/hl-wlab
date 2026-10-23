@@ -51,7 +51,8 @@ View → Keyboard & mouse lists these bindings. Empty filters
 offer Reset filters. Enter in a bookmark name saves it.
 
 **View → Performance** toggles a bottom-right overlay and saves the preference.
-FPS counts rendered frames; **Idle** means the static map is sleeping. CPU and GPU
+Rendering is capped at **60 FPS** in both games. FPS counts rendered frames;
+**Idle** means the static map is sleeping. CPU and GPU
 are frame times in milliseconds, not system utilization. Idle views retain the last
 frame timings. GPU time requires the browser's WebGL timer extension. RAM is the
 JavaScript heap only where exposed; VRAM is an estimate of loaded scene geometry

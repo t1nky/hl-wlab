@@ -24,6 +24,7 @@ import {
   WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { FrameLimiter } from '../src/render/frame-rate';
 import { CS2_BACKGROUND, cs2Lighting } from '../src/render/lighting';
 import { loadRenderMap, type RenderMap } from './render-map';
 import { decodeMap, type MapData, type Metadata, required, type Shot, type V3 } from './types';
@@ -551,10 +552,12 @@ new ResizeObserver(() => {
   camera.updateProjectionMatrix();
   invalidate();
 }).observe(view);
+const frameLimiter = new FrameLimiter();
 let previousFrame = performance.now();
 let lastStats = previousFrame;
 const previousView = new Matrix4();
 renderer.setAnimationLoop((time) => {
+  if (!frameLimiter.ready(time)) return;
   const dt = Math.min(0.05, Math.max(0, (time - previousFrame) / 1000));
   previousFrame = time;
   if (walking.active) void walking.update(dt);

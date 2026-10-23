@@ -1,5 +1,6 @@
 import type { Engine } from './engine/engine.ts';
 import type { Assets, Brush, BSP, Pose, Progress, Skybox, Target } from './engine/types.ts';
+import { FrameLimiter } from './render/frame-rate.ts';
 import { CS2_BACKGROUND } from './render/lighting.ts';
 import { createPointMaterial, updatePointGeometry } from './render/points.ts';
 import { viewPixelRatio } from './render/quality.ts';
@@ -1688,7 +1689,12 @@ new ResizeObserver(() => {
     schedule();
   }
 }).observe($('viewport'));
+const frameLimiter = new FrameLimiter();
 function tick(now: number) {
+  if (!frameLimiter.ready(now)) {
+    requestAnimationFrame(tick);
+    return;
+  }
   frameRequested = false;
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
