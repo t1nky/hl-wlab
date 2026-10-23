@@ -43,7 +43,8 @@ export interface Metadata {
   materials: Surface[];
   shapes: Shape[];
   stats: Record<string, number>;
-  spawns: { classname: string; origin: V3 }[];
+  spawns: { classname: string; origin: V3; angles?: V3 }[];
+  environment?: { angles: V3; color: V3 } | null;
   warnings: string[];
 }
 export interface MapData {

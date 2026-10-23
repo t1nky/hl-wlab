@@ -82,7 +82,7 @@ it('rejects malformed metadata before fetching or allocating atlas storage', asy
   for (const invalid of [
     { schema: 2 },
     { format: 'BC6H_SFLOAT' },
-    { sourceMip: 0 },
+    { sourceMip: -1 },
     { slice: 1 },
     { flipY: true },
     { width: 8192 },
@@ -98,6 +98,22 @@ it('rejects malformed metadata before fetching or allocating atlas storage', asy
     ).rejects.toThrow('Unsupported');
   }
   expect(fetch).not.toHaveBeenCalled();
+});
+
+it('loads a smaller native atlas mip from the selected map package', async () => {
+  const fetch = vi.fn(async () => new Response(gzipSync(new Uint8Array(16))));
+  vi.stubGlobal('fetch', fetch);
+  const texture = await loadIrradiance(
+    { ...metadata, sourceMip: 0, width: 4, height: 4, gpuBytes: 16 },
+    'build',
+    undefined,
+    '/local/maps/custom-map/',
+  );
+  expect(texture.texture.image.width).toBe(4);
+  expect(fetch).toHaveBeenCalledWith('/local/maps/custom-map/render/irradiance.bc6h.gz?v=build', {
+    signal: undefined,
+  });
+  texture.texture.dispose();
 });
 
 it('bounds decompressed bytes and rejects early EOF, corrupt gzip and missing files', async () => {

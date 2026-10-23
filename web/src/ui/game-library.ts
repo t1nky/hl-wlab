@@ -1,3 +1,4 @@
+import { browseCs2, type Cs2Catalog, cs2Catalog, prepareCs2 } from '../storage/cs2-library';
 import { filesFromUpload } from '../storage/game-files.ts';
 import { getLibrary } from '../storage/game-library.ts';
 import type {
@@ -8,36 +9,83 @@ import type {
 } from '../storage/library-types.ts';
 import { $ } from './dom.ts';
 import { errorMessage } from './errors.ts';
+import { syncSelectors } from './select';
 
-export function initializeLibrary(load: (library: LibraryMapRef) => Promise<void>) {
+export function initializeLibrary(
+  load: (library: LibraryMapRef) => Promise<void>,
+  loadCs2: (id: string) => Promise<void>,
+) {
   let catalog: LibraryCatalog | undefined;
   let working = false,
     sceneBusy = false,
     importing = false;
   let worker: Worker | null = null;
-  let prepared: { name: string; note: string } | undefined;
+  let cs2 = false;
+  let cs2Maps: Cs2Catalog | undefined;
+  let preparation: AbortController | undefined;
   const status = (text: string) => {
     $('libraryStatus').textContent = text;
   };
-  $('gameFolder').onclick = () => {
-    if (!working && !sceneBusy) $('gameDirectory').click();
+  $('gameFolder').onclick = async () => {
+    if (working || sceneBusy) return;
+    if (!cs2) {
+      $('gameDirectory').click();
+      return;
+    }
+    working = true;
+    sync();
+    status('Choose your CS2 installation…');
+    try {
+      showCs2(await browseCs2());
+    } catch (e) {
+      status(errorMessage(e));
+    } finally {
+      working = false;
+      sync();
+    }
   };
   function sync() {
-    // The CS2 prototype has one prepared map, not a Half-Life folder library.
-    $('gameFolder').hidden = !!prepared;
-    $('libraryLoad').hidden = !!prepared;
-    const picker = $('libraryMap').closest('label');
-    if (picker) picker.hidden = !!prepared;
+    $('libraryMap')
+      .closest('label')
+      ?.firstChild?.replaceWith(cs2 ? 'Maps' : 'Imported maps');
+    $('gameFolder').textContent = cs2 ? 'Choose CS2 folder' : 'Choose Half-Life folder';
     const files = $('mapFile').closest('details');
-    if (files) files.hidden = !!prepared;
-    $('gameFolder').disabled = working || sceneBusy || !!prepared;
-    $('libraryMap').disabled = working || sceneBusy || !!prepared || !catalog?.maps.length;
-    $('libraryLoad').disabled = working || sceneBusy || !!prepared || !$('libraryMap').value;
+    if (files) files.hidden = cs2;
+    $('gameFolder').disabled = working || sceneBusy;
+    $('libraryMap').disabled = working || sceneBusy || !(cs2 ? cs2Maps : catalog)?.maps.length;
+    $('libraryLoad').disabled = working || sceneBusy || !$('libraryMap').value;
     $('libraryCancel').hidden = !importing;
+    $('libraryCancel').textContent = cs2 ? 'Cancel preparation' : 'Cancel import';
+    syncSelectors();
+  }
+  function showCs2(next: Cs2Catalog, selected = $('libraryMap').value) {
+    cs2Maps = next;
+    let saved = '';
+    try {
+      saved = localStorage.getItem('wlab-cs2-map') ?? '';
+    } catch {
+      /* Optional preference. */
+    }
+    $('libraryMap').replaceChildren(
+      ...next.maps.map((map) => new Option(`${map.name}${map.ready ? ' · cached' : ''}`, map.id)),
+    );
+    const preferred =
+      next.maps.find((m) => m.id === selected) ??
+      next.maps.find((m) => m.id === saved) ??
+      next.maps.find((m) => m.id === 'de_inferno') ??
+      next.maps[0];
+    $('libraryMap').value = preferred?.id ?? '';
+    status(
+      next.maps.length
+        ? `${next.maps.length} maps · ${next.maps.filter((m) => m.ready).length} cached locally`
+        : 'Choose your CS2 installation to find maps.',
+    );
+    $('libraryDetails').hidden = true;
+    sync();
   }
   function showCatalog(next: LibraryCatalog) {
     catalog = next;
-    if (prepared) return;
+    if (cs2) return;
     $('libraryMap').replaceChildren(
       ...next.maps.map((map) => {
         const option = document.createElement('option');
@@ -108,6 +156,11 @@ export function initializeLibrary(load: (library: LibraryMapRef) => Promise<void
     }
   };
   $('libraryCancel').onclick = () => {
+    if (preparation) {
+      $('libraryCancel').disabled = true;
+      preparation.abort(new DOMException('Map preparation cancelled', 'AbortError'));
+      return;
+    }
     if (!importing || !worker) return;
     worker?.postMessage({ type: 'cancel' });
     $('libraryCancel').disabled = true;
@@ -115,6 +168,21 @@ export function initializeLibrary(load: (library: LibraryMapRef) => Promise<void
   };
   $('libraryMap').onchange = sync;
   $('libraryLoad').onclick = async () => {
+    if (cs2) {
+      const id = $('libraryMap').value;
+      if (!id || working || sceneBusy) return;
+      working = true;
+      sync();
+      try {
+        await loadCs2(id);
+      } catch (e) {
+        status(errorMessage(e));
+      } finally {
+        working = false;
+        sync();
+      }
+      return;
+    }
     const selected = catalog?.maps.find((map) => map.name === $('libraryMap').value);
     if (!selected || working || sceneBusy) return;
     working = true;
@@ -136,21 +204,52 @@ export function initializeLibrary(load: (library: LibraryMapRef) => Promise<void
     })
     .catch((e) => status(errorMessage(e)));
   return {
-    setPrepared(value: { name: string; note: string } | undefined) {
-      prepared = value;
-      if (value) {
-        const option = document.createElement('option');
-        option.value = value.name;
-        option.textContent = value.name;
-        $('libraryMap').replaceChildren(option);
-        status(value.note);
-        $('libraryDetails').hidden = true;
+    async setGame(value: 'cs2' | 'goldsrc') {
+      const wasCs2 = cs2;
+      cs2 = value === 'cs2';
+      if (cs2) {
+        showCs2(await cs2Catalog(), wasCs2 ? $('libraryMap').value : '');
+        return $('libraryMap').value;
       } else if (catalog) showCatalog(catalog);
       else {
         $('libraryMap').replaceChildren(new Option('No imported maps', ''));
         status('Select Half-Life or cstrike. Files stay on this device.');
       }
       sync();
+      return '';
+    },
+    async prepareCs2(id: string) {
+      preparation = new AbortController();
+      importing = true;
+      $('libraryProgress').hidden = false;
+      $('libraryProgress').removeAttribute('value');
+      sync();
+      try {
+        await prepareCs2(id, status, preparation.signal);
+        showCs2(await cs2Catalog());
+        $('libraryMap').value = id;
+        try {
+          localStorage.setItem('wlab-cs2-map', id);
+        } catch {
+          /* Optional preference. */
+        }
+      } catch (e) {
+        status(
+          e instanceof DOMException && e.name === 'AbortError'
+            ? 'Preparation cancelled.'
+            : errorMessage(e),
+        );
+        throw e;
+      } finally {
+        preparation = undefined;
+        importing = false;
+        $('libraryProgress').hidden = true;
+        $('libraryCancel').disabled = false;
+        sync();
+      }
+    },
+    loadedCs2(name: string) {
+      status(`${name} loaded. Walk and press E to place a target.`);
     },
     setBusy(value: boolean) {
       sceneBusy = value;

@@ -22,6 +22,7 @@ export async function loadMaterialMask(
   metadata: Cs2Mask,
   version: string,
   signal?: AbortSignal,
+  base = '/local/',
 ): Promise<Texture> {
   if (
     metadata.format !== 'R8_UNORM' ||
@@ -33,7 +34,7 @@ export async function loadMaterialMask(
   )
     throw Error('Unsupported material mask');
   signal?.throwIfAborted();
-  const response = await fetch(`/local/${metadata.file}?v=${encodeURIComponent(version)}`, {
+  const response = await fetch(`${base}${metadata.file}?v=${encodeURIComponent(version)}`, {
     signal,
   });
   if (!response.ok || !response.body) throw Error('Missing material mask');

@@ -16,6 +16,7 @@ import {
 } from 'three';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { packageBase } from './package';
 import { type batchStaticMap, batchStaticMapAsync } from './render-batches';
 import { decodeRenderViews, type RenderDecodeTimings } from './render-decode';
 import { type IrradianceMetadata, loadIrradiance } from './render-irradiance';
@@ -163,19 +164,21 @@ export async function loadRenderMap(
     collisionFingerprint?: string;
     batch?: boolean;
     sunShadows?: boolean;
+    mapId?: string;
   } = {},
 ): Promise<RenderMap> {
   const { clippingPlanes = [], onProgress, signal } = options;
+  const base = packageBase(options.mapId);
   const started = performance.now();
   onProgress?.('Reading private textured-map manifest…');
-  const response = await fetch('/local/render.json', { signal, cache: 'no-store' });
+  const response = await fetch(`${base}render.json`, { signal, cache: 'no-store' });
   if (!response.ok)
     throw Error(
       'Textured map unavailable. Run bun run cs2:prepare --render, then load textures again.',
     );
   const metadata: RenderMetadata = await response.json();
   const manifestMs = performance.now() - started;
-  if (metadata.schema !== 1 || metadata.map !== 'de_inferno' || !Array.isArray(metadata.chunks))
+  if (metadata.schema !== 1 || typeof metadata.map !== 'string' || !Array.isArray(metadata.chunks))
     throw Error('Unsupported textured-map package. Run bun run cs2:prepare --render again.');
   if (
     options.collisionFingerprint &&
@@ -193,7 +196,7 @@ export async function loadRenderMap(
   function maskTexture(mask: Cs2Mask): Promise<Texture> {
     let request = maskRequests.get(mask.file);
     if (!request) {
-      request = loadMaterialMask(mask, version, signal).then((texture) => {
+      request = loadMaterialMask(mask, version, signal, base).then((texture) => {
         // Other in-flight masks can finish after a sibling load has failed.
         if (disposed) {
           texture.dispose();
@@ -305,12 +308,12 @@ export async function loadRenderMap(
   try {
     if (metadata.sunShadows && options.sunShadows !== false) {
       const sunStarted = performance.now();
-      sun = await loadSunVisibility(metadata.sunShadows, version, signal);
+      sun = await loadSunVisibility(metadata.sunShadows, version, signal, base);
       timings.sunMs = performance.now() - sunStarted;
       group.userData.cs2SunTexture = sun.texture;
       if (metadata.irradiance) {
         const irradianceStarted = performance.now();
-        sun.irradiance = await loadIrradiance(metadata.irradiance, version, signal);
+        sun.irradiance = await loadIrradiance(metadata.irradiance, version, signal, base);
         timings.irradianceMs = performance.now() - irradianceStarted;
         group.userData.cs2IrradianceTexture = sun.irradiance.texture;
       }
@@ -321,9 +324,9 @@ export async function loadRenderMap(
       signal?.throwIfAborted();
       onProgress?.(`Loading render chunk ${index + 1}/${metadata.chunks.length}…`);
       signal?.throwIfAborted();
-      chunkUrl = new URL(`/local/${chunk}`, window.location.href).href;
+      chunkUrl = new URL(`${base}${chunk}`, window.location.href).href;
       const resourcesStart = performance.now();
-      const gltf = await loader.loadAsync(`/local/${chunk}`);
+      const gltf = await loader.loadAsync(`${base}${chunk}`);
       timings.resourcesMs += performance.now() - resourcesStart;
       group.add(gltf.scene);
       signal?.throwIfAborted();

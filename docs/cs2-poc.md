@@ -1,4 +1,4 @@
-# CS2 Inferno wallbang POC
+# CS2 wallbang tool
 
 Experimental branch `cs2-poc`. Run locally; do not deploy the prepared map.
 This branch now runs CS1.6 and CS2 in the original application's shell. Main
@@ -216,8 +216,6 @@ byte fixtures, cache-corruption repro and handoff are under
 ## Shared application (recommended)
 
 ```powershell
-bun run cs2:prepare --render   # once, or after a game/map update
-bun run cs2:prepare:player
 bun run dev
 ```
 
@@ -226,6 +224,38 @@ between **CS 1.6** and **CS2 · experimental**. The default URL stays CS1.6.
 The original UI, Three.js renderer, orbit/fly camera, pointer lock, sensitivity,
 WASD, Space, Ctrl/C, Escape, F/Home, E placement, result selection and filters
 are shared. Only collision, map loading and shot simulation change with the game.
+
+Open **Maps**, pick any discovered map, then **Load map**. The local server discovers
+compiled worlds with physics in the installation's `game/csgo/maps` and Steam's
+`steamapps/workshop/content/730`. Auxiliary prefab/UI/sky scenes are filtered out.
+The standard Steam installation is detected on Windows; **Choose CS2 folder** uses
+the OS folder picker (Windows/macOS; Linux requires Zenity). Alternatively set
+`CS2_GAME` before starting the server. This source preference is saved only under
+ignored `.local/cs2/source.json`. No browser directory upload or game-folder writes occur.
+
+An uncached map is prepared on demand, with phase progress and **Cancel preparation**.
+Only one exporter runs at a time, including CLI invocations. Cancellation stops its
+process tree. A stale lock after interruption is recovered on the next run.
+Packages are stored separately in `.local/cs2/<map-id>`, validated before being
+listed as cached, and revalidated against the installed build/exporter when loaded.
+Physics, render geometry, images, layer masks and lightmaps all use the selected
+map's URL prefix. Map switches dispose the previous worker and GPU resources;
+spawns, facing and sunlight direction come from the selected map's entities.
+Cached packages also work when privately transferred to a machine without CS2.
+
+CLI preparation remains available:
+
+```powershell
+bun run cs2:prepare --map=de_dust2 --render --with-player
+```
+
+For a custom VPK, also pass `--source=<absolute .vpk path>` and
+`--resource=maps/<internal map name>.vmap`; `--map` names its separate cache folder.
+Shared dependencies are resolved from the selected CS2 installation, including for
+Workshop VPKs outside the game directory. Unsupported lighting bakes fall back to
+basic lighting with a notice in `render.json`; unsupported game/physics features
+retain the existing warnings and static-scene accuracy limits. No map assets enter
+the public build, source index or repository.
 CS2 walking uses an 8,192-unit draw distance with fog beyond 6,554 units and a capped pixel budget;
 orbit and fly keep the full-map range. The legacy CS1.6 physics is unchanged.
 

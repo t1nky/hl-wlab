@@ -65,6 +65,7 @@ export async function loadSunVisibility(
   metadata: SunMetadata,
   version: string,
   signal?: AbortSignal,
+  base = '/local/',
 ): Promise<SunLighting> {
   if (
     metadata.schema !== 1 ||
@@ -83,7 +84,7 @@ export async function loadSunVisibility(
     !metadata.uvScale.every((v) => Number.isFinite(v) && v > 0)
   )
     throw Error('Unsupported sunlight visibility atlas');
-  const response = await fetch(`/local/${metadata.file}?v=${encodeURIComponent(version)}`, {
+  const response = await fetch(`${base}${metadata.file}?v=${encodeURIComponent(version)}`, {
     signal,
   });
   if (!response.ok || !response.body) throw Error('Missing sunlight visibility atlas');

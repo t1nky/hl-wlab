@@ -18,12 +18,14 @@ internal static class RenderIrradiance
         var path = info.GetArray<string>("m_lightMaps").Single(p => p.EndsWith("/irradiance.vtex"));
         using var resource = loader.LoadFileCompiled(path)!;
         var texture = (Texture)resource.DataBlock!;
-        const uint mip = 1;
+        uint mip = 0;
+        while (mip + 1 < texture.NumMipLevels && (texture.Width >> (int)mip) * (texture.Height >> (int)mip) > 4096 * 4096) mip++;
+        var width = Math.Max(4, texture.Width >> (int)mip); var height = Math.Max(4, texture.Height >> (int)mip);
         if (texture.Format.ToString() != "BC6H" || texture.Depth != 1 ||
-            texture.Width != 8192 || texture.Height != 8192 || texture.NumMipLevels < 2)
-            throw new InvalidDataException("Expected authored 4096 BC6H unsigned irradiance mip");
+            width % 4 != 0 || height % 4 != 0 || width * height > 4096 * 4096)
+            throw new InvalidDataException("Expected a bounded authored BC6H unsigned irradiance mip");
         var blocks = new byte[texture.CalculateBufferSizeForMipLevel(mip)];
-        if (blocks.Length != 4096 * 4096) throw new InvalidDataException("Invalid BC6H irradiance mip size");
+        if (blocks.Length != width * height) throw new InvalidDataException("Invalid BC6H irradiance mip size");
         texture.ReadTextureMipLevel(blocks, mip);
         const string file = "irradiance.bc6h.gz";
         using (var stream = File.Create(Path.Combine(folder, file)))
@@ -31,10 +33,10 @@ internal static class RenderIrradiance
         var scale = world.GetLightmapUvScale();
         return new JsonObject {
             ["schema"] = 1, ["file"] = "render/" + file, ["format"] = "BC6H_UFLOAT",
-            ["width"] = 4096, ["height"] = 4096, ["gpuBytes"] = blocks.Length,
+            ["width"] = width, ["height"] = height, ["gpuBytes"] = blocks.Length,
             ["bytes"] = new FileInfo(Path.Combine(folder, file)).Length,
             ["uvScale"] = new JsonArray(scale.X, scale.Y), ["slice"] = 0,
-            ["sourceMip"] = 1, ["flipY"] = false,
+            ["sourceMip"] = mip, ["flipY"] = false,
         };
     }
 }

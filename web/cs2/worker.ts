@@ -3,13 +3,14 @@ import type { TargetPose } from '../src/games/target';
 import { type CollisionCache, CollisionMap } from './collision';
 import { WalkController, type WalkInput } from './movement';
 import { createNativeScan } from './native-scan';
+import { packageBase } from './package';
 import { CS2_ROW, clearScanPlacementCache, type ScanStats, scanMap } from './scan';
 import { shareCollision } from './scan-parallel';
 import { ScanPool } from './scan-pool';
 import { decodeMap, type Metadata, type V3 } from './types';
 
 type Request = { id: number } & (
-  | { op: 'load'; includeBuffer?: boolean }
+  | { op: 'load'; includeBuffer?: boolean; mapId?: string }
   | { op: 'trace'; source: V3; target: V3 }
   | { op: 'pick'; source: V3; direction: V3; maxZ: number }
   | { op: 'scan'; target: V3; settings?: ScanSettings; pose?: TargetPose }
@@ -73,13 +74,14 @@ async function saveCache(key: string, bvh: CollisionCache) {
     db.close();
   }
 }
-async function load(id: number, includeBuffer = true) {
+async function load(id: number, includeBuffer = true, mapId?: string) {
   const start = performance.now();
-  const response = await fetch('/local/map.json');
+  const base = packageBase(mapId);
+  const response = await fetch(`${base}map.json`);
   if (!response.ok) throw Error('Prepare the installed map first: bun run cs2:prepare');
   const meta: Metadata = await response.json();
   if (meta.schema !== 1) throw Error('Unsupported map package schema');
-  const binary = await fetch(`/local/map.cs2map?v=${meta.fingerprint}`);
+  const binary = await fetch(`${base}map.cs2map?v=${meta.fingerprint}`);
   if (!binary.ok) throw Error('Map collision data unavailable');
   const buffer = await binary.arrayBuffer();
   const fetchMs = performance.now() - start;
@@ -215,7 +217,7 @@ scope.onmessage = async ({ data }) => {
   try {
     switch (data.op) {
       case 'load':
-        await load(data.id, data.includeBuffer);
+        await load(data.id, data.includeBuffer, data.mapId);
         break;
       case 'trace':
         send(data.id, { kind: 'shot', shot: map.trace(data.source, data.target) });

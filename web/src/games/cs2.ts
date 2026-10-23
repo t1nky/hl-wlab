@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { targetDamage } from '../../cs2/damage';
 import type { WalkState } from '../../cs2/movement';
+import { packageBase } from '../../cs2/package';
 import { loadRenderMap, type RenderMap } from '../../cs2/render-map';
 import { CS2_ROW, classifyCs2, cs2Sample, type ScanStats } from '../../cs2/scan';
 import { type Metadata, required, type Shot, type V3 } from '../../cs2/types';
@@ -42,6 +43,7 @@ export class Cs2Game implements GameAnalysis {
   readonly worker = new Worker(new URL('../../cs2/worker.ts', import.meta.url), { type: 'module' });
   readonly bounds = new THREE.Box3();
   readonly movement: AsyncMovement<WalkState>;
+  readonly mapId: string;
   readonly walker: NavigationBody;
   meta!: Metadata;
   render?: RenderMap;
@@ -59,7 +61,8 @@ export class Cs2Game implements GameAnalysis {
     { resolve: (reply: Reply) => void; reject: (e: Error) => void }
   >();
   private scanProgress?: (event: AnalysisProgress) => void;
-  constructor(changed: () => void, error: (error: unknown) => void) {
+  constructor(changed: () => void, error: (error: unknown) => void, mapId = 'de_inferno') {
+    this.mapId = mapId;
     this.worker.onmessage = ({ data: reply }: MessageEvent<Reply>) => {
       if (reply.kind === 'progress') {
         this.scanProgress?.({
@@ -123,9 +126,21 @@ export class Cs2Game implements GameAnalysis {
   }
   async load(progress: (message: string) => void) {
     progress('Loading CS2 physics and cached BVH…');
-    const reply = await this.request({ op: 'load', includeBuffer: false });
+    const reply = await this.request({ op: 'load', includeBuffer: false, mapId: this.mapId });
     this.meta = required(reply.meta);
-    const playerResponse = await fetch('/local/player.json', {
+    const sun = this.group.children.find((child) => child instanceof THREE.DirectionalLight);
+    if (sun instanceof THREE.DirectionalLight) {
+      const environment = this.meta.environment;
+      if (environment) {
+        const pitch = THREE.MathUtils.degToRad(environment.angles[0]);
+        const yaw = THREE.MathUtils.degToRad(environment.angles[1]);
+        sun.position
+          .set(-Math.cos(pitch) * Math.cos(yaw), -Math.cos(pitch) * Math.sin(yaw), Math.sin(pitch))
+          .multiplyScalar(4000);
+        sun.color.setRGB(...environment.color, THREE.SRGBColorSpace);
+      } else if (this.meta.map !== 'de_inferno') sun.intensity = 0;
+    }
+    const playerResponse = await fetch(`${packageBase(this.mapId)}player.json`, {
       signal: this.abort.signal,
       cache: 'no-store',
     });
@@ -139,6 +154,7 @@ export class Cs2Game implements GameAnalysis {
       signal: this.abort.signal,
       collisionFingerprint: this.meta.fingerprint,
       onProgress: progress,
+      mapId: this.mapId,
     });
     if (this.disposed) {
       this.render.dispose();
@@ -146,7 +162,14 @@ export class Cs2Game implements GameAnalysis {
     }
     this.group.add(this.render.group);
     this.bounds.setFromObject(this.render.group);
-    await this.startWalk([77.46, 1227.8, 156.9]);
+    const spawn = this.meta.spawns[0]?.origin;
+    if (spawn) await this.startWalk([spawn[0], spawn[1], spawn[2] + 64]);
+    else {
+      // Custom maps without a spawn remain inspectable in orbit/fly. Walking can
+      // still be started from a floor chosen by the user.
+      const center = this.bounds.getCenter(new THREE.Vector3());
+      this.target = center.toArray() as V3;
+    }
   }
   async startWalk(eye: V3, resume = false, crouched = false) {
     this.movement.pause();

@@ -47,7 +47,7 @@ internal static class RenderExport
                 if (blend == 0 && material.IntParams.GetValueOrDefault("F_ALPHA_TEST") > 0) blend = 2;
                 if (blend == 0 && (material.IntParams.GetValueOrDefault("F_TRANSLUCENT") > 0 || material.ShaderName.Contains("glass"))) blend = 1;
                 var alpha = blend != 0;
-                var key = Path.GetFileNameWithoutExtension(file.EndsWith("_c") ? file[..^2] : file);
+                var key = (file.EndsWith("_c") ? file[..^2] : file).Replace('\\', '/');
                 var layers = new List<string>();
                 if (material.ShaderName == "csgo_environment_blend.vfx") {
                     if (material.TextureParams.TryGetValue("g_tColor2", out var second)) layers.Add(second);
@@ -58,8 +58,6 @@ internal static class RenderExport
                     material.FloatParams.GetValueOrDefault("g_flOpacityScale", 1f),
                     new(material.VectorParams), new(material.FloatParams),
                     material.IntParams.ToDictionary(p => p.Key, p => (long)p.Value), new(material.TextureParams), layers.ToArray(), material.IntAttributes.ContainsKey("tools.toolsmaterial"));
-                if (Materials.TryGetValue(key, out var prior) && (prior.Texture != color || prior.KeepAlpha != alpha))
-                    throw new InvalidDataException("Ambiguous render material basename: " + key);
                 Materials[key] = info;
                 material.TextureParams.Clear();
             }
@@ -73,7 +71,7 @@ internal static class RenderExport
         }
     }
 
-    public static void Prepare(string mapPath, string output, string collisionFingerprint, bool force)
+    public static void Prepare(string mapPath, string gameInfoPath, string resourcePath, string mapName, string output, string collisionFingerprint, bool force)
     {
         var timer = Stopwatch.StartNew();
         var fingerprint = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(
@@ -94,7 +92,7 @@ internal static class RenderExport
                     File.Exists(Path.Combine(output, file.GetProperty("path").GetString()!)) &&
                     new FileInfo(Path.Combine(output, file.GetProperty("path").GetString()!)).Length == file.GetProperty("bytes").GetInt64()))
             {
-                Console.WriteLine($"Cached textured Inferno valid ({timer.Elapsed.TotalMilliseconds:F0} ms).");
+                Console.WriteLine($"Cached textured {mapName} valid ({timer.Elapsed.TotalMilliseconds:F0} ms).");
                 return;
             }
         }
@@ -103,21 +101,28 @@ internal static class RenderExport
         // Invalidate before a new export; an interrupted export is never considered complete.
         if (File.Exists(manifest)) File.Delete(manifest);
         using var package = new Package(); package.Read(mapPath);
-        using var loader = new RenderLoader(package, mapPath);
-        using var rawLoader = new GameFileLoader(package, mapPath);
-        using var map = rawLoader.LoadFileCompiled("maps/de_inferno.vmap")!;
+        using var loader = new RenderLoader(package, gameInfoPath);
+        using var rawLoader = new GameFileLoader(package, gameInfoPath);
+        using var map = rawLoader.LoadFileCompiled(resourcePath)!;
         var extract = new MapExtract(map, rawLoader);
         using var worldResource = rawLoader.LoadFileCompiled($"{extract.LumpFolder}/world.vwrld")!;
         var world = (World)worldResource.DataBlock!;
-        var sunShadows = RenderSunShadows.Export(world, rawLoader, folder);
-        var irradiance = RenderIrradiance.Export(world, rawLoader, folder);
+        var warnings = new HashSet<string>();
+        JsonObject? sunShadows = null, irradiance = null;
+        // Some maps are indoors, unlit, or use another bake format. Geometry/collision
+        // remain useful with fallback lighting; never apply an incompatible atlas.
+        try { sunShadows = RenderSunShadows.Export(world, rawLoader, folder); }
+        catch (Exception e) when (e is InvalidDataException or InvalidOperationException or FileNotFoundException) { warnings.Add("Baked sunlight unavailable: " + e.Message); }
+        if (sunShadows != null) {
+            try { irradiance = RenderIrradiance.Export(world, rawLoader, folder); }
+            catch (Exception e) when (e is InvalidDataException or InvalidOperationException or FileNotFoundException) { warnings.Add("Baked irradiance unavailable: " + e.Message); }
+        }
         var nodes = world.GetWorldNodeNames().ToArray();
         var chunks = new List<string>();
         var textures = new Dictionary<string, TextureInfo>();
         var imageContents = new Dictionary<string, TextureInfo>();
         var masks = new Dictionary<string, MaskInfo>();
         var maskContents = new Dictionary<string, MaskInfo>();
-        var warnings = new HashSet<string>();
         var primitives = 0; var meshCount = 0; var triangleCount = 0L; var texturedTriangleCount = 0L; var materialCount = 0; var excludedLods = 0; var maskedTintMaterials = 0;
         for (var i = 0; i < nodes.Length; i++)
         {
@@ -132,8 +137,10 @@ internal static class RenderExport
             };
             exporter.Export(node, destination);
             var gltf = JsonNode.Parse(File.ReadAllText(destination))!.AsObject();
-            excludedLods += FilterAggregateLods((WorldNode)node.DataBlock!, gltf);
+            // Bind full source paths before dropping LoDs: their now-unused materials
+            // may share a basename with a surviving material from another directory.
             RenderSunShadows.Bind((WorldNode)node.DataBlock!, gltf, rawLoader);
+            excludedLods += FilterAggregateLods((WorldNode)node.DataBlock!, gltf);
             CompactGeometry(gltf, folder, $"chunk-{i:D3}");
             var images = new JsonArray(); var gltfTextures = new JsonArray(); var imageInfos = new List<TextureInfo>();
             if (gltf["materials"] is JsonArray materials)
@@ -142,8 +149,9 @@ internal static class RenderExport
                 foreach (var materialNode in materials)
                 {
                     var material = materialNode!.AsObject();
-                    var name = material["name"]!.GetValue<string>();
-                    if (!loader.Materials.TryGetValue(name, out var source)) continue;
+                    var name = material["extras"]?["sourceMaterial"]?.GetValue<string>();
+                    if (name == null || !loader.Materials.TryGetValue(name, out var source))
+                        throw new InvalidDataException("Missing full-path render material binding: " + material["name"]);
                     material["alphaMode"] = source.BlendMode == 2 ? "MASK" : source.BlendMode != 0 ? "BLEND" : "OPAQUE";
                     if (source.BlendMode == 2) material["alphaCutoff"] = source.AlphaCutoff;
                     material["extras"] = new JsonObject { ["sourceMaterial"] = source.Path, ["tools"] = source.Tools,
@@ -319,12 +327,12 @@ internal static class RenderExport
         }
         foreach (var texture in imageContents.Values) usedFiles.Add("render/" + texture.File);
         foreach (var mask in maskContents.Values) usedFiles.Add("render/" + mask.File);
-        usedFiles.Add(sunShadows["file"]!.GetValue<string>());
-        usedFiles.Add(irradiance["file"]!.GetValue<string>());
+        if (sunShadows != null) usedFiles.Add(sunShadows["file"]!.GetValue<string>());
+        if (irradiance != null) usedFiles.Add(irradiance["file"]!.GetValue<string>());
         var files = usedFiles.Order().Select(path => new { path, bytes = new FileInfo(Path.Combine(output, path)).Length }).ToArray();
         var metadata = new
         {
-            schema = 1, map = "de_inferno", fingerprint, collisionFingerprint, preparedAt = DateTime.UtcNow,
+            schema = 1, map = mapName, fingerprint, collisionFingerprint, preparedAt = DateTime.UtcNow,
             prepareMs = timer.Elapsed.TotalMilliseconds, chunks, gltfToSource, textureMaxSize = TextureSize,
             meshCount, primitives, triangleCount, texturedTriangleCount, materialCount, excludedLods, textureCount = imageContents.Count,
             maskedTintMaterials, textureBytes = imageContents.Values.Sum(t => t.Bytes),
@@ -332,7 +340,7 @@ internal static class RenderExport
             sunShadows, irradiance,
             textureEncoding = new { opaque = "smallest of PNG / verified lossless WebP", alpha = "PNG", pixelRoundTripVerified = true,
                 webpCount = imageContents.Values.Count(t => t.File.EndsWith(".webp")) },
-            estimatedTextureGpuBytes = imageContents.Values.Sum(t => (long)t.Width * t.Height * 4 * 4 / 3) + maskContents.Values.Sum(t => (long)t.GpuBytes) + sunShadows["gpuBytes"]!.GetValue<int>() + irradiance["gpuBytes"]!.GetValue<int>(),
+            estimatedTextureGpuBytes = imageContents.Values.Sum(t => (long)t.Width * t.Height * 4 * 4 / 3) + maskContents.Values.Sum(t => (long)t.GpuBytes) + (sunShadows?["gpuBytes"]?.GetValue<int>() ?? 0) + (irradiance?["gpuBytes"]?.GetValue<int>() ?? 0),
             totalBytes = files.Sum(f => f.bytes), files,
             warnings = warnings.Concat(new[] {
                 "Render geometry is for display only; separate vphys data drives shots and walking.",
@@ -342,7 +350,7 @@ internal static class RenderExport
             }),
         };
         File.WriteAllText(manifest + ".tmp", JsonSerializer.Serialize(metadata)); File.Move(manifest + ".tmp", manifest, true);
-        Console.WriteLine($"Textured Inferno: {triangleCount:N0} triangles, {primitives:N0} primitives, {textures.Count} base textures; {files.Sum(f => f.bytes) / 1048576.0:F1} MiB disk, {metadata.estimatedTextureGpuBytes / 1048576.0:F1} MiB estimated texture GPU; {timer.Elapsed.TotalSeconds:F2} s.");
+        Console.WriteLine($"Textured {mapName}: {triangleCount:N0} triangles, {primitives:N0} primitives, {textures.Count} base textures; {files.Sum(f => f.bytes) / 1048576.0:F1} MiB disk, {metadata.estimatedTextureGpuBytes / 1048576.0:F1} MiB estimated texture GPU; {timer.Elapsed.TotalSeconds:F2} s.");
     }
 
     private static JsonArray MatrixJson(Matrix4x4 m) => new(m.M11, m.M12, m.M13, m.M14, m.M21, m.M22, m.M23, m.M24,

@@ -35,24 +35,29 @@ export async function loadIrradiance(
   metadata: IrradianceMetadata,
   version: string,
   signal?: AbortSignal,
+  base = '/local/',
 ): Promise<IrradianceLighting> {
   if (
     metadata.schema !== 1 ||
     metadata.format !== 'BC6H_UFLOAT' ||
-    metadata.sourceMip !== 1 ||
+    !Number.isInteger(metadata.sourceMip) ||
+    metadata.sourceMip < 0 ||
+    metadata.sourceMip > 15 ||
     metadata.slice !== 0 ||
     metadata.flipY !== false ||
     !/^render\/[a-zA-Z0-9_.-]+\.bc6h\.gz$/.test(metadata.file) ||
-    metadata.width !== 4096 ||
-    metadata.height !== 4096 ||
-    metadata.gpuBytes !== 4096 * 4096 ||
+    ![metadata.width, metadata.height].every(
+      (n) => Number.isInteger(n) && n >= 4 && n <= 16384 && n % 4 === 0,
+    ) ||
+    metadata.gpuBytes !== metadata.width * metadata.height ||
+    metadata.gpuBytes > 4096 * 4096 ||
     !Array.isArray(metadata.uvScale) ||
     metadata.uvScale.length !== 2 ||
     !metadata.uvScale.every((v) => Number.isFinite(v) && v > 0)
   )
     throw Error('Unsupported diffuse irradiance atlas');
   signal?.throwIfAborted();
-  const response = await fetch(`/local/${metadata.file}?v=${encodeURIComponent(version)}`, {
+  const response = await fetch(`${base}${metadata.file}?v=${encodeURIComponent(version)}`, {
     signal,
   });
   signal?.throwIfAborted();

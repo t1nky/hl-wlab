@@ -19,6 +19,8 @@ test('private CS2 route serves WebP and PNG, revalidates, and restricts asset pa
   await writeFile(join(assets, 'render/mask.r8.gz'), 'mask fixture');
   await writeFile(join(assets, 'render/not-allowed.txt'), 'private');
   await writeFile(join(folder, 'outside.webp'), 'must stay outside');
+  await mkdir(join(folder, 'another-map/render'), { recursive: true });
+  await writeFile(join(folder, 'another-map/render/fixture.webp'), 'other-map');
   const server = await createServer({
     configFile: false,
     root: folder,
@@ -52,6 +54,31 @@ test('private CS2 route serves WebP and PNG, revalidates, and restricts asset pa
     assert.equal(png.status, 200);
     assert.equal(png.headers.get('content-type'), 'image/png');
     assert.equal(await png.text(), 'png fixture');
+    const other = await fetch(`${base}/local/maps/another-map/render/fixture.webp`);
+    assert.equal(await other.text(), 'other-map');
+    assert.equal(
+      (await fetch(`${base}/local/maps/package/render/fixture.webp`)).headers.get('content-length'),
+      String(webp.byteLength),
+    );
+    assert.equal((await fetch(`${base}/local/prepare/unknown`, { method: 'POST' })).status, 403);
+    assert.equal(
+      (
+        await fetch(`${base}/local/prepare/unknown`, {
+          method: 'POST',
+          headers: { Origin: 'https://example.com' },
+        })
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await fetch(`${base}/local/maps/another-map/render/fixture.webp`, {
+          method: 'POST',
+          headers: { Origin: base },
+        })
+      ).status,
+      405,
+    );
     for (const atlas of ['sun.bc4.gz', 'irradiance.bc6h.gz', 'mask.r8.gz']) {
       const response = await fetch(`${base}/local/render/${atlas}`);
       assert.equal(response.status, 200);
@@ -65,6 +92,10 @@ test('private CS2 route serves WebP and PNG, revalidates, and restricts asset pa
       'render/mask.r8',
       'render/mask.r8.gz.js',
       'render/missing.webp',
+      'source.json',
+      'maps/another-map/source.json',
+      'maps/%2e%2e%2f/render/fixture.webp',
+      'maps/another-map/render/%2e%2e%2f%2e%2e%2foutside.webp',
       'render/%2e%2e%2f%2e%2e%2foutside.webp',
       'render/%2e%2e%5c%2e%2e%5coutside.webp',
     ])

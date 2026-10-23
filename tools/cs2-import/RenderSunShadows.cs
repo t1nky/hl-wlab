@@ -29,7 +29,8 @@ internal static class RenderSunShadows
         foreach (var name in world.GetEntityLumpNames()) Entities(name);
         if (suns.Count != 1) throw new InvalidDataException("Expected exactly one baked sun");
         var sun = suns[0];
-        var hash = sun.GetUInt32Property("light_path_uniqueid");
+        // Entity keyvalues may serialize the same 32-bit token as signed decimal.
+        var hash = unchecked((uint)sun.GetIntegerProperty("light_path_uniqueid"));
         var binding = info.GetArray("m_bakedShadows").Single(b => b.GetUInt32Property("m_nLightHash") == hash);
         if (binding.GetInt32Property("m_nShadowChannel") != 0 || sun.GetInt32Property("bakedshadowindex") != 0)
             throw new InvalidDataException("Only sun channel zero is supported");
@@ -99,6 +100,11 @@ internal static class RenderSunShadows
                     var materialPath = draw.GetStringProperty("m_material") ?? draw.GetStringProperty("m_pMaterial");
                     var exportedName = gltf["materials"]![primitive["material"]!.GetValue<int>()]!["name"]!.GetValue<string>();
                     if (exportedName != Path.GetFileNameWithoutExtension(materialPath)) throw new InvalidDataException("Lighting material mismatch " + name);
+                    var exportedMaterial = gltf["materials"]![primitive["material"]!.GetValue<int>()]!;
+                    var fullPath = materialPath.Replace('\\', '/');
+                    var priorPath = exportedMaterial["extras"]?["sourceMaterial"]?.GetValue<string>();
+                    if (priorPath != null && priorPath != fullPath) throw new InvalidDataException("Conflicting render material paths " + name);
+                    exportedMaterial["extras"] = new JsonObject { ["sourceMaterial"] = fullPath };
                     var mode = Mesh.HasBakedLightingFromLightMap(draw) ? "lightmap" : Mesh.HasBakedLightingFromVertexStream(draw) ? "vertex" : "probe";
                     var binding = new JsonObject { ["mode"] = mode };
                     if (mode == "lightmap") {

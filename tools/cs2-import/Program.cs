@@ -21,31 +21,38 @@ var allowed = Path.Combine(repo, ".local", "cs2") + Path.DirectorySeparatorChar;
 if (!(output + Path.DirectorySeparatorChar).StartsWith(allowed, StringComparison.OrdinalIgnoreCase))
   throw new ArgumentException("Output must be under this repo's .local/cs2");
 Directory.CreateDirectory(output);
-const string map = "de_inferno";
+string Option(string key, string fallback) => args.FirstOrDefault(a => a.StartsWith("--" + key + "="))?[(key.Length + 3)..] ?? fallback;
+var cacheName = Option("map", "de_inferno");
+if (!System.Text.RegularExpressions.Regex.IsMatch(cacheName, "^[a-zA-Z0-9_-]{1,100}$")) throw new ArgumentException("Invalid map name");
 const int schema = 1;
 var csgo = Path.Combine(game, "game", "csgo");
-var mapPath = Path.Combine(csgo, "maps", map + ".vpk");
+var mapPath = Path.GetFullPath(Option("source", Path.Combine(csgo, "maps", cacheName + ".vpk")));
+var mapResourcePath = Option("resource", $"maps/{cacheName}.vmap");
+if (!System.Text.RegularExpressions.Regex.IsMatch(mapResourcePath, "^[a-zA-Z0-9_./-]+\\.vmap$") || mapResourcePath.Contains(".."))
+  throw new ArgumentException("Invalid compiled map resource");
+var map = Path.GetFileNameWithoutExtension(mapResourcePath);
 var steamInf = File.ReadAllText(Path.Combine(csgo, "steam.inf"));
 if (args.Contains("--player")) { PlayerExport.Prepare(game, output, args.Contains("--force")); return; }
+if (args.Contains("--with-player")) PlayerExport.Prepare(game, output, args.Contains("--force"));
 var sources = new[] { mapPath }.Concat(new[] { csgo, Path.Combine(game, "game", "core") }
     .SelectMany(d => Directory.EnumerateFiles(d, "pak*.vpk"))).Order().Select(p =>
     {
       var f = new FileInfo(p); return $"{f.FullName}|{f.Length}|{f.LastWriteTimeUtc.Ticks}";
     });
 var fingerprint = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(
-    $"{schema}|VRF20.1.7467|{steamInf}|{string.Join('\n', sources)}|{File.ReadAllText(Path.Combine(repo, "tools/cs2-import/Program.cs"))}")));
+    $"{schema}|VRF20.1.7467|{mapResourcePath}|{steamInf}|{string.Join('\n', sources)}|{File.ReadAllText(Path.Combine(repo, "tools/cs2-import/Program.cs"))}")));
 var manifestPath = Path.Combine(output, "map.json");
-if (args.Contains("--render")) RenderExport.Prepare(mapPath, output, fingerprint, args.Contains("--force"));
+if (args.Contains("--render")) RenderExport.Prepare(mapPath, Path.Combine(csgo, "gameinfo.gi"), mapResourcePath, map, output, fingerprint, args.Contains("--force"));
 if (!args.Contains("--force") && File.Exists(manifestPath) && File.Exists(Path.Combine(output, "map.cs2map")))
 {
   using var old = JsonDocument.Parse(File.ReadAllText(manifestPath));
   if (old.RootElement.GetProperty("fingerprint").GetString() == fingerprint)
   {
-    Console.WriteLine($"Cached Inferno package valid ({timer.Elapsed.TotalMilliseconds:F0} ms)."); return;
+    Console.WriteLine($"Cached {map} package valid ({timer.Elapsed.TotalMilliseconds:F0} ms)."); return;
   }
 }
 using var package = new Package(); package.Read(mapPath);
-using var loader = new GameFileLoader(package, mapPath);
+using var loader = new GameFileLoader(package, Path.Combine(csgo, "gameinfo.gi"));
 loader.EnsureStringTokenGameKeys();
 byte[] ReadRaw(string path)
 {
@@ -184,7 +191,7 @@ void AddPhysics(PhysAggregateData phys, Matrix4x4 placement, string source)
     }
   }
 }
-using var mapResource = loader.LoadFileCompiled($"maps/{map}.vmap")!;
+using var mapResource = loader.LoadFileCompiled(mapResourcePath)!;
 var extract = new MapExtract(mapResource, loader);
 var worldPhysics = extract.LoadWorldPhysics() ?? throw new InvalidDataException("No world collision data");
 AddPhysics(worldPhysics, Matrix4x4.Identity, "world (baked world-space collision)");
@@ -228,7 +235,7 @@ foreach (var nodeName in world.GetWorldNodeNames())
     else Count("renderOnlyAggregates");
   }
 }
-var spawns = new List<object>(); var visitedLumps = new HashSet<string>();
+var spawns = new List<object>(); var visitedLumps = new HashSet<string>(); object? environment = null;
 void Entities(string lumpName)
 {
   if (!visitedLumps.Add(lumpName)) return;
@@ -237,9 +244,14 @@ void Entities(string lumpName)
   foreach (var e in lump.GetEntities())
   {
     var classname = e.GetStringProperty("classname");
+    if (classname == "light_environment" && environment == null) {
+      var angles = e.GetVector3Property("angles"); var color = e.GetColor32Property("color");
+      environment = new { angles = new[] { angles.X, angles.Y, angles.Z }, color = new[] { color.X, color.Y, color.Z } };
+    }
     if (classname is "info_player_terrorist" or "info_player_counterterrorist")
     {
-      var v = e.GetVector3Property("origin"); spawns.Add(new { classname, origin = new[] { v.X, v.Y, v.Z } });
+      var v = e.GetVector3Property("origin"); var a = e.GetVector3Property("angles");
+      spawns.Add(new { classname, origin = new[] { v.X, v.Y, v.Z }, angles = new[] { a.X, a.Y, a.Z } });
     }
     if (!string.IsNullOrEmpty(e.GetStringProperty("model"))) Count("entityModelsOmitted");
   }
@@ -281,6 +293,7 @@ var metadata = new
   shapes,
   stats,
   spawns,
+  environment,
   warnings,
   vertexCount = vertices.Count,
   triangleCount = indices.Count / 3,

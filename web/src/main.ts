@@ -140,7 +140,7 @@ let bsp: BSP,
   revision = 0,
   errorCount = 0;
 const bookmarks = initializeBookmarks({ capture: captureBookmark, restore: restoreBookmark });
-const library = initializeLibrary(loadImportedMap);
+const library = initializeLibrary(loadImportedMap, (id) => switchGame('cs2', id));
 const cut = new THREE.Plane(new THREE.Vector3(0, 0, -1), 600);
 renderer.clippingPlanes = [cut];
 // kind encoding: see results.js. Hit-type, stance and damage filters are uniforms, so toggles and the damage
@@ -1125,8 +1125,9 @@ async function inspectShot(
 const traceCs2 = inspectShot;
 
 let originalView: { camera: number[]; target: number[]; cut: number } | undefined;
-async function switchGame(next: string) {
-  if (busy || loadingScene || (next === 'cs2') === !!cs2) return;
+async function switchGame(next: string, mapId?: string) {
+  if (busy || loadingScene || ((next === 'cs2') === !!cs2 && !mapId)) return;
+  const previous = cs2;
   clearError();
   setMode('orbit');
   modeRevision++;
@@ -1140,51 +1141,78 @@ async function switchGame(next: string) {
   bookmarks.setReady(false);
   $('progress').value = 0;
   if (next === 'cs2') {
-    originalView = {
-      camera: camera.position.toArray(),
-      target: orbit.target.toArray(),
-      cut: cut.constant,
-    };
+    if (!cs2)
+      originalView = {
+        camera: camera.position.toArray(),
+        target: orbit.target.toArray(),
+        cut: cut.constant,
+      };
     disposeGroup(mapGroup);
     disposeGroup(targetGroup);
     skyRevision++;
     setSky(null);
-    gameUI(CS2);
+    if (!cs2) gameUI(CS2);
     syncArmor();
-    library.setPrepared({
-      name: 'de_inferno',
-      note: 'CS2 preview: de_inferno only. Other maps are not supported yet.',
-    });
     try {
+      const selected = await library.setGame('cs2');
+      const id = mapId ?? selected;
+      if (id) await library.prepareCs2(id);
       const { Cs2Game } = await import('./games/cs2');
-      const game = new Cs2Game(schedule, error);
+      previous?.dispose();
+      const game = new Cs2Game(schedule, error, id || 'de_inferno');
       cs2 = game;
-      await game.load((message) => {
-        $('assetsStatus').textContent = message;
-      });
-      scene.add(game.group);
-      applyGameView();
-      game.textures($('textures').checked);
-      showShadows();
-      poseUI(game.poseChoices);
-      $('cut').min = String(Math.floor(game.bounds.min.z) - 1);
-      $('cut').max = String(Math.ceil(game.bounds.max.z) + 1);
-      applyCut(Number($('cut').max));
-      updateTarget(false);
-      updatePoints();
-      camera.position.fromArray(game.state?.eye ?? game.target);
-      camera.lookAt(new THREE.Vector3(...game.target));
-      orbit.target.fromArray(game.target);
-      orbit.update();
-      $('assetsStatus').textContent = `CS2 · ${game.meta.map}`;
-      $('progressText').textContent = game.definition.scan.note;
-      design.map(`CS2 / ${game.meta.map}`);
-      window.labReady = true;
+      if (!id) {
+        $('assetsStatus').textContent = 'Choose your CS2 folder, then select a map.';
+        design.map('CS2 / choose map');
+        targetMarker.visible = false;
+        document.documentElement.dataset.ready = 'false';
+      } else {
+        await game.load((message) => {
+          $('assetsStatus').textContent = message;
+        });
+        scene.add(game.group);
+        applyGameView();
+        game.textures($('textures').checked);
+        showShadows();
+        poseUI(game.poseChoices);
+        const spawn =
+          game.meta.spawns.find(
+            (s) =>
+              game.state &&
+              Math.hypot(s.origin[0] - game.state.foot[0], s.origin[1] - game.state.foot[1]) > 128,
+          ) ?? game.meta.spawns[0];
+        writeTarget(spawn?.origin ?? game.state?.foot ?? game.target);
+        $('yaw').value = String(spawn?.angles?.[1] ?? 0);
+        writeSource(game.state?.eye ?? game.target);
+        $('cut').min = String(Math.floor(game.bounds.min.z) - 1);
+        $('cut').max = String(Math.ceil(game.bounds.max.z) + 1);
+        applyCut(Number($('cut').max));
+        updateTarget(false);
+        updatePoints();
+        camera.position.fromArray(game.state?.eye ?? game.target);
+        const yaw = THREE.MathUtils.degToRad(game.meta.spawns[0]?.angles?.[1] ?? 0);
+        orbit.target
+          .copy(camera.position)
+          .add(new THREE.Vector3(Math.cos(yaw) * 512, Math.sin(yaw) * 512, 0));
+        camera.lookAt(orbit.target);
+        orbit.update();
+        $('assetsStatus').textContent = `CS2 · ${game.meta.map}`;
+        $('progressText').textContent = game.definition.scan.note;
+        design.map(`CS2 / ${game.meta.map}`);
+        library.loadedCs2(game.meta.map);
+        window.labReady = true;
+      }
     } catch (e) {
-      cs2?.dispose();
-      cs2 = undefined;
-      restoreOriginalGame();
-      error(e);
+      if (previous?.render && cs2 === previous) {
+        updateTarget(false);
+        updatePoints();
+        window.labReady = true;
+      } else {
+        cs2?.dispose();
+        cs2 = undefined;
+        restoreOriginalGame();
+      }
+      if (!(e instanceof DOMException && e.name === 'AbortError')) error(e);
     }
   } else {
     cs2?.dispose();
@@ -1198,7 +1226,7 @@ async function switchGame(next: string) {
 }
 function restoreOriginalGame() {
   gameUI(GOLDSRC);
-  library.setPrepared(undefined);
+  void library.setGame('goldsrc');
   poseUI(goldsrc.poseChoices);
   applyGameView();
   syncArmor();

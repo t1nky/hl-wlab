@@ -1,7 +1,16 @@
 // Local-only map preparation. No game files or exports are uploaded.
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MeshoptEncoder } from 'meshoptimizer/encoder';
@@ -9,7 +18,6 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
 import { packRenderGeometry } from './cs2-render-pack.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const output = fileURLToPath(new URL('../.local/cs2/de_inferno', import.meta.url));
 
 /** Lossless, old-decoder-compatible stream; verify exact bytes before publishing local output. */
 export async function encodeRenderView(source, count, stride, mode) {
@@ -74,7 +82,7 @@ export function deduplicateRenderAccessors(gltf, buffers) {
   };
 }
 
-async function compressRenderPackage() {
+export async function compressRenderPackage(output) {
   const manifestPath = resolve(output, 'render.json');
   const metadata = JSON.parse(readFileSync(manifestPath, 'utf8'));
   if (metadata.compression?.codec === 'EXT_meshopt_compression v0') return;
@@ -157,10 +165,16 @@ async function compressRenderPackage() {
   }
   const files = new Set(metadata.chunks);
   if (metadata.sunShadows) files.add(metadata.sunShadows.file);
+  if (metadata.irradiance) files.add(metadata.irradiance.file);
   for (const chunk of metadata.chunks) {
     const gltf = JSON.parse(readFileSync(resolve(output, chunk), 'utf8'));
     for (const buffer of gltf.buffers) if (buffer.uri) files.add(`render/${buffer.uri}`);
     for (const image of gltf.images) files.add(`render/${image.uri}`);
+    for (const material of gltf.materials ?? []) {
+      const settings = material.extras?.cs2;
+      for (const layer of [settings?.tint?.base, ...(settings?.layers ?? []).map((l) => l.tint)])
+        if (layer?.mask) files.add(layer.mask.file);
+    }
   }
   metadata.files = [...files]
     .sort()
@@ -186,25 +200,87 @@ async function compressRenderPackage() {
 }
 
 if (import.meta.main) {
+  const option = (name, fallback) =>
+    process.argv.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3) || fallback;
+  const map = option('map', 'de_inferno');
+  if (!/^[a-zA-Z0-9_-]{1,100}$/.test(map)) throw Error('Invalid map cache name');
+  const output = resolve(root, '.local/cs2', map);
   const game =
     process.argv.find((arg) => arg.startsWith('--game='))?.slice(7) ||
     'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Counter-Strike Global Offensive';
-  const result = spawnSync(
-    'dotnet',
-    [
-      'run',
-      '--project',
-      'tools/cs2-import',
-      '--',
-      game,
-      output,
-      ...(process.argv.includes('--force') ? ['--force'] : []),
-      ...(process.argv.includes('--render') ? ['--render'] : []),
-      ...(process.argv.includes('--player') ? ['--player'] : []),
-    ],
-    { cwd: root, stdio: 'inherit' },
-  );
-  if (result.error) throw result.error;
-  process.exitCode = result.status ?? 1;
-  if (result.status === 0 && process.argv.includes('--render')) await compressRenderPackage();
+  // CLI and browser preparation share one exporter/build lock. A killed process
+  // leaves only a PID marker; the next run safely recovers it before exporting.
+  mkdirSync(resolve(root, '.local/cs2'), { recursive: true });
+  const lock = resolve(root, '.local/cs2/prepare.lock');
+  let acquired = false;
+  while (!acquired) {
+    try {
+      const handle = openSync(lock, 'wx');
+      writeFileSync(handle, String(process.pid));
+      closeSync(handle);
+      acquired = true;
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      let pid;
+      try {
+        pid = Number(readFileSync(lock, 'utf8'));
+      } catch {
+        continue;
+      }
+      let alive = false;
+      if (!pid) {
+        try {
+          alive = Date.now() - statSync(lock).mtimeMs < 30000;
+        } catch {
+          continue;
+        }
+      }
+      if (Number.isSafeInteger(pid) && pid > 0) {
+        try {
+          process.kill(pid, 0);
+          alive = true;
+        } catch {
+          /* Stale owner. */
+        }
+      }
+      if (!alive) {
+        try {
+          unlinkSync(lock);
+        } catch {
+          /* Another waiter recovered it. */
+        }
+        continue;
+      }
+      console.log('Waiting for the current map preparation…');
+      await new Promise((done) => setTimeout(done, 1000));
+    }
+  }
+  try {
+    const result = spawnSync(
+      'dotnet',
+      [
+        'run',
+        '--project',
+        'tools/cs2-import',
+        '--',
+        game,
+        output,
+        `--map=${map}`,
+        ...process.argv.filter(
+          (arg) => arg.startsWith('--source=') || arg.startsWith('--resource='),
+        ),
+        ...(process.argv.includes('--with-player') ? ['--with-player'] : []),
+        ...(process.argv.includes('--force') ? ['--force'] : []),
+        ...(process.argv.includes('--render') ? ['--render'] : []),
+        ...(process.argv.includes('--player') ? ['--player'] : []),
+      ],
+      { cwd: root, stdio: 'inherit' },
+    );
+    if (result.error) throw result.error;
+    process.exitCode = result.status ?? 1;
+    if (result.status === 0 && process.argv.includes('--render'))
+      await compressRenderPackage(output);
+  } finally {
+    unlinkSync(lock);
+  }
 }

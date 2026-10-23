@@ -10,11 +10,19 @@ browser file storage (OPFS). Nothing is uploaded or written to your game folder.
 Import progress and cancellation are available. Re-import to refresh changed
 files; identical files are reused. Files inside PAK archives are not extracted.
 
-All browsers use one folder-upload flow (`webkitdirectory`). OPFS storage
+CS1.6 uses one folder-upload flow (`webkitdirectory`). OPFS storage
 requires HTTPS or localhost. Safari is secondary.
 Individual-file import is still available under **Import / export files**.
-The local CS2 preview currently supports only the prepared **de_inferno** package;
-its other-map selection and game-folder import are not implemented yet.
+For the local CS2 tool, open **Maps**, select a map and **Load map**. Your installed
+CS2 maps and downloaded Workshop maps are discovered automatically. Use **Choose CS2 folder**
+if the installation is elsewhere; select **Counter-Strike Global Offensive**, containing `game/csgo`.
+The first load prepares textures, physics and player poses locally, with progress and cancellation.
+Later loads reuse the saved package. The selected map is remembered. CS2 preparation requires
+the local development server, Bun and the .NET 10 SDK; it is not available on GitHub Pages.
+CS2 packages live in the ignored `.local/cs2/<map>` folders, rather than OPFS.
+They can be transferred privately to another computer running this checkout, without Steam there.
+The game directory is read only and no assets are uploaded. Maps using unsupported bake formats
+use fallback lighting; live doors, breakables and movable props remain outside the static model.
 Choose Walk, click the map, move with WASD, look in the desired direction and press E to place
 the target. Set stance and armor in **Target**; choose the weapon and spacing in **Scan**.
 The scan button stays at the bottom of the card, with result filters stacked below it.
