@@ -93,7 +93,7 @@ export async function loadIrradiance(
     metadata.height,
     RGB_BPTC_UNSIGNED_Format,
   );
-  texture.name = 'CS2 authored diffuse irradiance mip1 (BC6H unsigned)';
+  texture.name = `CS2 authored diffuse irradiance mip${metadata.sourceMip} (BC6H unsigned)`;
   texture.colorSpace = NoColorSpace;
   texture.flipY = false;
   texture.wrapS = texture.wrapT = ClampToEdgeWrapping;

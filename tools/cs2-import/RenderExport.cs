@@ -113,10 +113,9 @@ internal static class RenderExport
         // remain useful with fallback lighting; never apply an incompatible atlas.
         try { sunShadows = RenderSunShadows.Export(world, rawLoader, folder); }
         catch (Exception e) when (e is InvalidDataException or InvalidOperationException or FileNotFoundException) { warnings.Add("Baked sunlight unavailable: " + e.Message); }
-        if (sunShadows != null) {
-            try { irradiance = RenderIrradiance.Export(world, rawLoader, folder); }
-            catch (Exception e) when (e is InvalidDataException or InvalidOperationException or FileNotFoundException) { warnings.Add("Baked irradiance unavailable: " + e.Message); }
-        }
+        // Indirect lighting is independent of the direct shadow atlas format.
+        try { irradiance = RenderIrradiance.Export(world, rawLoader, folder); }
+        catch (Exception e) when (e is InvalidDataException or InvalidOperationException or FileNotFoundException) { warnings.Add("Baked irradiance unavailable: " + e.Message); }
         var nodes = world.GetWorldNodeNames().ToArray();
         var chunks = new List<string>();
         var textures = new Dictionary<string, TextureInfo>();
@@ -344,7 +343,7 @@ internal static class RenderExport
             totalBytes = files.Sum(f => f.bytes), files,
             warnings = warnings.Concat(new[] {
                 "Render geometry is for display only; separate vphys data drives shots and walking.",
-                "Base-color layers use vertex weights; sunlight uses original BC4 visibility and BC6H irradiance mip 1. Height blending, normal/roughness, directional irradiance and full Source shader parity omitted.",
+                "Base-color layers use vertex weights; baked lighting uses native BC4/BC7 sun visibility and bounded BC6H irradiance. Height blending, normal/roughness, directional irradiance and full Source shader parity omitted.",
                 "Opaque environment original RGBA and lossless shared R8 height-green masks drive runtime affine color correction, model tint and vertex paint. Shared overlays and other shader families remain approximations.",
                 "Static world-node surfaces only; unsupported atmospheric-effect proxies, entity-driven doors, breakables, movable props, skybox and live state omitted."
             }),

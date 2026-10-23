@@ -242,6 +242,6 @@ ${shader.fragmentShader}`;
     );
   };
   material.customProgramCacheKey = () =>
-    `cs2-layers-${settings?.layers.map((l) => l.uv.channel).join('-') ?? ''}-tint-${!!settings?.tint}-masks-${maskTextures.length}-sun-${!!sun}-irradiance-${!!sun?.irradiance}`;
+    `cs2-layers-${settings?.layers.map((l) => l.uv.channel).join('-') ?? ''}-tint-${!!settings?.tint}-masks-${maskTextures.length}-sun-${sun?.texture?.format ?? 'none'}-${sun?.channel ?? 0}-irradiance-${!!sun?.irradiance}`;
   return material;
 }

@@ -12,6 +12,7 @@ import {
   type Plane,
   Sphere,
   Texture,
+  Vector2,
   Vector3,
 } from 'three';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
@@ -306,12 +307,15 @@ export async function loadRenderMap(
   const pendingMaterials = new Set<Material>();
   let sun: SunLighting | undefined;
   try {
-    if (metadata.sunShadows && options.sunShadows !== false) {
-      const sunStarted = performance.now();
-      sun = await loadSunVisibility(metadata.sunShadows, version, signal, base);
-      timings.sunMs = performance.now() - sunStarted;
-      group.userData.cs2SunTexture = sun.texture;
+    if (options.sunShadows !== false) {
+      if (metadata.sunShadows) {
+        const sunStarted = performance.now();
+        sun = await loadSunVisibility(metadata.sunShadows, version, signal, base);
+        timings.sunMs = performance.now() - sunStarted;
+        group.userData.cs2SunTexture = sun.texture;
+      }
       if (metadata.irradiance) {
+        sun ??= { scale: new Vector2(...metadata.irradiance.uvScale), enabled: { value: 1 } };
         const irradianceStarted = performance.now();
         sun.irradiance = await loadIrradiance(metadata.irradiance, version, signal, base);
         timings.irradianceMs = performance.now() - irradianceStarted;

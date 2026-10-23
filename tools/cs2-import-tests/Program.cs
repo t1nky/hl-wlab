@@ -1,6 +1,15 @@
 using System.Numerics;
 
 var checks = 0;
+foreach(var channel in Enumerable.Range(0,4)) {
+    if(RenderSunBlocks.ResolveChannel(channel,null)!=channel || RenderSunBlocks.ResolveChannel(channel,channel)!=channel)
+        throw new Exception("Missing optional world bindings must preserve the entity sun channel");
+    checks++;
+}
+foreach(var (entity, world) in new[] { (-1, (int?)null), (4, (int?)null), (0, (int?)1) }) {
+    try { RenderSunBlocks.ResolveChannel(entity,world); throw new Exception("Accepted invalid sunlight binding"); }
+    catch(InvalidDataException) { checks++; }
+}
 var sourceBlocks = Enumerable.Range(0, 64).Select(i => (byte)i).ToArray();
 var sunBlocks = RenderSunBlocks.ExtractRed(sourceBlocks);
 if (!sunBlocks.SequenceEqual(sourceBlocks[..8].Concat(sourceBlocks[16..24]).Concat(sourceBlocks[32..40]).Concat(sourceBlocks[48..56])))
@@ -8,6 +17,23 @@ if (!sunBlocks.SequenceEqual(sourceBlocks[..8].Concat(sourceBlocks[16..24]).Conc
 checks++;
 try { RenderSunBlocks.ExtractRed(new byte[17]); throw new Exception("Accepted truncated BC5"); }
 catch (InvalidDataException) { checks++; }
+foreach(var format in new[] { "ATI1N", "ATI2N", "BC7" }) {
+    var channels = format == "BC7" ? 4 : format == "ATI2N" ? 2 : 1;
+    for(var channel = 0; channel < channels; channel++) {
+        var selected = RenderSunBlocks.Select(format, sourceBlocks, channel);
+        var expected = format == "ATI2N"
+            ? Enumerable.Range(0, sourceBlocks.Length / 16).SelectMany(i => sourceBlocks.Skip(i * 16 + channel * 8).Take(8)).ToArray()
+            : sourceBlocks;
+        if(!selected.Data.SequenceEqual(expected) || selected.Channel != (format == "BC7" ? channel : 0) ||
+            selected.Format != (format == "BC7" ? "BC7_UNORM" : "BC4_UNORM"))
+            throw new Exception($"Native sunlight blocks/channel were changed: {format}/{channel}");
+        checks++;
+    }
+}
+foreach(var (format, channel, size) in new[] { ("ATI1N", 1, 8), ("ATI2N", 2, 16), ("BC7", 4, 16), ("BC7", 0, 17), ("ATI1N", 0, 0), ("DXT1", 0, 8) }) {
+    try { RenderSunBlocks.Select(format, new byte[size], channel); throw new Exception("Accepted incompatible sun atlas"); }
+    catch(InvalidDataException) { checks++; }
+}
 void Near(Vector3 actual, Vector3 expected, string label) {
     if (!float.IsFinite(actual.X + actual.Y + actual.Z) || Vector3.Distance(actual, expected) > 1e-5f)
         throw new Exception($"{label}: {actual} != {expected}");

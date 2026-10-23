@@ -9,6 +9,7 @@ import {
   MeshStandardMaterial,
   NoColorSpace,
   RED_RGTC1_Format,
+  RGBA_BPTC_Format,
   ShaderLib,
   Texture,
   Vector2,
@@ -43,7 +44,7 @@ const metadata: SunMetadata = {
   gamma20: false,
   visibility: '1-r',
 };
-const sun: SunLighting = {
+const sun: SunLighting & { texture: Texture } = {
   texture: Object.assign(new Texture(), { image: { width: 4, height: 4 } }),
   scale: new Vector2(...metadata.uvScale),
   enabled: { value: 1 },
@@ -158,6 +159,54 @@ it('gates only designated direct sunlight, applies scale once, and keeps alpha/l
     extensions: { has: () => false },
   } as unknown as WebGLRenderer);
   expect(fallback.fragmentShader).not.toContain('cs2SunShadow');
+});
+
+it('loads native linear BC7 unchanged and selects the authored shadow channel', async () => {
+  const blocks = Uint8Array.from({ length: 16 }, (_, i) => i * 13);
+  vi.stubGlobal('fetch', async () => new Response(gzipSync(blocks)));
+  const bc7: SunMetadata = {
+    ...metadata,
+    file: 'render/sun-shadow.bc7.gz',
+    format: 'BC7_UNORM',
+    gpuBytes: 16,
+    channel: 3,
+    visibility: '1-channel',
+  };
+  const loaded = await loadSunVisibility(bc7, 'dust2');
+  expect(loaded.texture.format).toBe(RGBA_BPTC_Format);
+  expect(loaded.texture.colorSpace).toBe(NoColorSpace);
+  expect(loaded.texture.flipY).toBe(false);
+  const mipmap = (loaded.texture as CompressedTexture).mipmaps?.[0] as { data: Uint8Array };
+  expect(mipmap.data).toEqual(blocks);
+  const compiled = shader();
+  patchSunVisibility(compiled, loaded, {
+    ...renderer,
+    extensions: { has: (extension: string) => extension === 'EXT_texture_compression_bptc' },
+  } as unknown as WebGLRenderer);
+  expect(loaded.status).toBe('active');
+  expect(compiled.fragmentShader).toContain('1.0 - texture2D(cs2SunShadow, vCs2LightUv).a');
+  const unsupported = shader();
+  patchSunVisibility(unsupported, loaded, {
+    ...renderer,
+    extensions: { has: (extension: string) => extension === 'EXT_texture_compression_rgtc' },
+  } as unknown as WebGLRenderer);
+  expect(loaded.status).toBe('unsupported');
+  expect(unsupported.uniforms.cs2SunShadow).toBeUndefined();
+  const bc4Material = diffuseMaterial(new MeshStandardMaterial(), undefined, [], sun);
+  const bc7Material = diffuseMaterial(new MeshStandardMaterial(), undefined, [], loaded);
+  expect(bc7Material.customProgramCacheKey()).not.toBe(bc4Material.customProgramCacheKey());
+  for (const invalid of [
+    { file: metadata.file },
+    { gpuBytes: 8 },
+    { channel: -1 },
+    { channel: 4 },
+    { channel: 0.5 },
+    { format: 'BC7_SRGB' },
+    { visibility: '1-r' },
+  ])
+    await expect(loadSunVisibility({ ...bc7, ...invalid }, '')).rejects.toThrow('Unsupported');
+  await expect(loadSunVisibility({ ...metadata, channel: 1 }, '')).rejects.toThrow('Unsupported');
+  loaded.texture.dispose();
 });
 
 it('rejects oversized expanded data and early EOF against the declared atlas capacity', async () => {

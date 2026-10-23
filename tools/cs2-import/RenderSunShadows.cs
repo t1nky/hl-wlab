@@ -7,7 +7,7 @@ using ValveResourceFormat.IO;
 using ValveResourceFormat.ResourceTypes;
 using ValveResourceFormat.Serialization.KeyValues;
 
-// Display-only sunlight visibility. Keep original BC4 blocks and native UV precision.
+// Display-only sunlight visibility. Keep native BC4/BC7 blocks and UV precision.
 internal static class RenderSunShadows
 {
     public static JsonObject Export(World world, GameFileLoader loader, string folder)
@@ -31,26 +31,27 @@ internal static class RenderSunShadows
         var sun = suns[0];
         // Entity keyvalues may serialize the same 32-bit token as signed decimal.
         var hash = unchecked((uint)sun.GetIntegerProperty("light_path_uniqueid"));
-        var binding = info.GetArray("m_bakedShadows").Single(b => b.GetUInt32Property("m_nLightHash") == hash);
-        if (binding.GetInt32Property("m_nShadowChannel") != 0 || sun.GetInt32Property("bakedshadowindex") != 0)
-            throw new InvalidDataException("Only sun channel zero is supported");
+        var binding = info.GetArray("m_bakedShadows")?.SingleOrDefault(b => b.GetUInt32Property("m_nLightHash") == hash);
+        var channel = RenderSunBlocks.ResolveChannel(sun.GetInt32Property("bakedshadowindex", -1), binding?.GetInt32Property("m_nShadowChannel"));
         var path = info.GetArray<string>("m_lightMaps").Single(p => p.EndsWith("/direct_light_shadows.vtex"));
         using var textureResource = loader.LoadFileCompiled(path)!;
         var texture = (Texture)textureResource.DataBlock!;
-        if (texture.Format.ToString() != "ATI2N" || texture.Depth != 1 || texture.Width % 4 != 0 || texture.Height % 4 != 0)
-            throw new InvalidDataException("Expected one BC5U sunlight atlas slice");
-        var bc5 = new byte[texture.CalculateBufferSizeForMipLevel(0)];
-        texture.ReadTextureMipLevel(bc5, 0);
-        var bc4 = RenderSunBlocks.ExtractRed(bc5);
-        const string file = "sun-shadow.bc4.gz";
+        if (texture.Depth != 1 || texture.Width % 4 != 0 || texture.Height % 4 != 0)
+            throw new InvalidDataException("Expected one block-compressed sunlight atlas slice");
+        var blocks = new byte[texture.CalculateBufferSizeForMipLevel(0)];
+        texture.ReadTextureMipLevel(blocks, 0);
+        var selected = RenderSunBlocks.Select(texture.Format.ToString(), blocks, channel);
+        var expectedBytes = texture.Width * texture.Height / (selected.Format == "BC4_UNORM" ? 2 : 1);
+        if (selected.Data.Length != expectedBytes) throw new InvalidDataException("Invalid sunlight atlas byte size");
+        var file = $"sun-shadow.{selected.Extension}.gz";
         using (var stream = File.Create(Path.Combine(folder, file)))
-        using (var gzip = new GZipStream(stream, CompressionLevel.SmallestSize)) gzip.Write(bc4);
+        using (var gzip = new GZipStream(stream, CompressionLevel.SmallestSize)) gzip.Write(selected.Data);
         var scale = world.GetLightmapUvScale();
         return new JsonObject {
-            ["schema"] = 1, ["file"] = "render/" + file, ["format"] = "BC4_UNORM", ["width"] = texture.Width,
-            ["height"] = texture.Height, ["gpuBytes"] = bc4.Length, ["bytes"] = new FileInfo(Path.Combine(folder, file)).Length,
-            ["uvScale"] = new JsonArray(scale.X, scale.Y), ["slice"] = 0, ["channel"] = 0,
-            ["gamma20"] = false, ["visibility"] = "1-r", ["flipY"] = false, ["lightHash"] = hash,
+            ["schema"] = 1, ["file"] = "render/" + file, ["format"] = selected.Format, ["width"] = texture.Width,
+            ["height"] = texture.Height, ["gpuBytes"] = selected.Data.Length, ["bytes"] = new FileInfo(Path.Combine(folder, file)).Length,
+            ["uvScale"] = new JsonArray(scale.X, scale.Y), ["slice"] = 0, ["channel"] = selected.Channel,
+            ["gamma20"] = false, ["visibility"] = selected.Channel == 0 ? "1-r" : "1-channel", ["flipY"] = false, ["lightHash"] = hash,
         };
     }
 

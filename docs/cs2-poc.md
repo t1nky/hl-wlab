@@ -41,8 +41,8 @@ GoldSrc now reads original RGB lightmaps and packs a shared atlas for baked
 lighting and shadows. Local Inferno adds one **4 MiB** atlas and about **21 ms** of
 warm parse/build work, with unchanged geometry/draw calls. CS2 combines Z-up
 sky/ground lighting with original full-resolution baked sunlight visibility.
-Native BC4 blocks add a 32 MiB GPU atlas and about 31.7 MiB of native UNORM16 UVs;
-the atlas download is about 5.25 MiB. Paired isolated warm map loading measured
+Inferno's native BC4 blocks add a 32 MiB GPU atlas and about 31.7 MiB of native UNORM16 UVs;
+its atlas download is about 5.25 MiB. Paired isolated warm map loading measured
 1.347 → 1.449 s, and warm render submission CPU measured 2.27 → 2.36 ms on
 SwiftShader. That package size was 293.5 MiB. Full-resolution/directional irradiance,
 local-light shadow channels, exposure and game display parity remain unimplemented. Older packages
@@ -67,8 +67,8 @@ shared across instance colors; masks are deduplicated lossless R8 textures.
 Unsupported atmospheric `csgo_effects` proxy polygons are omitted from the static
 analysis scene instead of appearing as opaque gray sheets. Collision is unchanged.
 
-Sun direction and color follow Inferno's actual `light_environment`. Authored
-4096-square BC6H irradiance mip 1 replaces approximate hemisphere lighting on
+Sun direction and color follow the selected map's `light_environment`. Authored
+BC6H irradiance uses a source mip bounded to 4096-square and replaces approximate hemisphere lighting on
 lightmapped surfaces, adding **16 MiB** and one lookup without another draw pass.
 Unsupported BPTC hardware retains hemisphere lighting. The current local package
 has **8,323,129 triangles**, 6,549 primitives, 255 shared color images and 150 R8
@@ -76,6 +76,21 @@ masks: **307.0 MiB** on disk and **386.3 MiB** estimated texture GPU storage,
 excluding batching/browser overhead. Shadows toggles both baked lighting inputs.
 Normals/specular, directional irradiance, Source tone mapping/color grading,
 atmospheric effects and skyboxes still limit visual parity.
+
+Map lighting formats are independent of the bake version: Dust2 and Nuke use BC7
+shadow atlases, Mirage uses BC4, and Inferno uses BC5. The importer retains BC4/BC7
+blocks and extracts the selected BC5 channel without recompression. Runtime upload
+uses linear data sampling, the source UV scale and the authored sun channel. An
+8192-square BC7 atlas uses 64 MiB; BC4 uses 32 MiB. Neither requires CPU image
+decoding or another rendering pass. Devices require BPTC for BC7 and RGTC for BC4.
+Italy and Pool Day omit the optional world shadow lookup; their light entity's
+stationary channel remains authoritative. A present lookup must agree with it.
+
+Previously only BC5 was accepted, silently leaving other formats on generic
+lighting and also skipping their independent irradiance atlas. Both importer and
+loader now handle indirect lighting independently, so an unsupported or missing sun
+atlas cannot suppress a valid indirect bake. Loading a map revalidates the importer
+fingerprint and rebuilds an outdated local package when its game files are available.
 
 For reproducible scan comparisons, run from the repository:
 

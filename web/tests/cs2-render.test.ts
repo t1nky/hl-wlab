@@ -1,3 +1,4 @@
+import { gzipSync } from 'node:zlib';
 import {
   BoxGeometry,
   BufferAttribute,
@@ -23,6 +24,48 @@ import {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('CS2 render resources', () => {
+  it('loads and disposes indirect lighting even when a map has no sun atlas', async () => {
+    const manifest = {
+      schema: 1,
+      map: 'indirect-only',
+      fingerprint: 'bake',
+      chunks: [],
+      gltfToSource: new Matrix4().toArray(),
+      irradiance: {
+        schema: 1,
+        file: 'render/irradiance.bc6h.gz',
+        format: 'BC6H_UFLOAT',
+        width: 4,
+        height: 4,
+        gpuBytes: 16,
+        uvScale: [1, 1],
+        slice: 0,
+        sourceMip: 0,
+        flipY: false,
+      },
+    };
+    const fetch = vi.fn(async (url: string) =>
+      url.endsWith('render.json')
+        ? Response.json(manifest)
+        : new Response(gzipSync(new Uint8Array(16))),
+    );
+    vi.stubGlobal('fetch', fetch);
+    const loaded = await loadRenderMap({ mapId: 'indirect-only' });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls[1][0]).toContain('/local/maps/indirect-only/render/irradiance.bc6h.gz');
+    expect(loaded.group.userData.cs2SunTexture).toBeUndefined();
+    const atlas = loaded.group.userData.cs2IrradianceTexture as Texture;
+    expect(atlas).toBeInstanceOf(Texture);
+    const dispose = vi.spyOn(atlas, 'dispose');
+    loaded.dispose();
+    expect(dispose).toHaveBeenCalledTimes(1);
+    fetch.mockClear();
+    const disabled = await loadRenderMap({ sunShadows: false });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(disabled.group.userData.cs2IrradianceTexture).toBeUndefined();
+    disabled.dispose();
+  });
+
   it('culls a remote indexed primitive despite shared positions near the camera', () => {
     const geometry = new BufferGeometry();
     geometry.setAttribute(

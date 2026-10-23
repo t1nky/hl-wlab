@@ -200,3 +200,15 @@ it('supports BPTC independently of BC4 and preserves fallback on unsupported dev
   sun.irradiance.scale.x = 1;
   expect(() => patchIrradiance(shader(), sun, renderer)).toThrow('Mismatched');
 });
+
+it('applies indirect lighting when the map has no supported sun atlas', () => {
+  const { texture: _, ...indirectOnly } = lighting();
+  const compiled = shader();
+  patchSunVisibility(compiled, indirectOnly, renderer);
+  patchIrradiance(compiled, indirectOnly, renderer);
+  expect(indirectOnly.irradiance.status).toBe('active');
+  expect(compiled.uniforms.cs2SunShadow).toBeUndefined();
+  expect(compiled.uniforms.cs2Irradiance).toBeDefined();
+  expect(compiled.vertexShader.match(/cs2LightUv \* cs2SunUvScale/g)).toHaveLength(1);
+  expect(compiled.fragmentShader).not.toContain('directLight.color *=');
+});

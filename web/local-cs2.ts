@@ -76,7 +76,9 @@ export function localCs2(packageRoot = local): Plugin {
           name = match[2];
         }
         const isRender =
-          /^render\/[a-zA-Z0-9_.-]+\.(gltf|bin|png|webp|bc4\.gz|bc6h\.gz|r8\.gz)$/.test(name);
+          /^render\/[a-zA-Z0-9_.-]+\.(gltf|bin|png|webp|bc4\.gz|bc7\.gz|bc6h\.gz|r8\.gz)$/.test(
+            name,
+          );
         const file = resolve(root, name);
         if (
           (name !== 'map.json' &&

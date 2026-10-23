@@ -5,6 +5,7 @@ import {
   LinearFilter,
   NoColorSpace,
   RED_RGTC1_Format,
+  RGBA_BPTC_Format,
   ShaderChunk,
   type Texture,
   Vector2,
@@ -36,7 +37,8 @@ export interface SunBinding {
 }
 
 export interface SunLighting {
-  texture: Texture;
+  texture?: Texture;
+  channel?: number;
   scale: Vector2;
   enabled: { value: number };
   irradiance?: IrradianceLighting;
@@ -66,20 +68,24 @@ export async function loadSunVisibility(
   version: string,
   signal?: AbortSignal,
   base = '/local/',
-): Promise<SunLighting> {
+): Promise<SunLighting & { texture: Texture }> {
+  const bc7 = metadata.format === 'BC7_UNORM';
   if (
     metadata.schema !== 1 ||
-    metadata.format !== 'BC4_UNORM' ||
+    (!bc7 && metadata.format !== 'BC4_UNORM') ||
     metadata.gamma20 ||
-    metadata.visibility !== '1-r' ||
+    metadata.visibility !== (metadata.channel === 0 ? '1-r' : '1-channel') ||
     metadata.flipY ||
-    metadata.channel !== 0 ||
+    !Number.isInteger(metadata.channel) ||
+    metadata.channel < 0 ||
+    metadata.channel > (bc7 ? 3 : 0) ||
     metadata.slice !== 0 ||
-    !/^render\/[a-zA-Z0-9_.-]+\.bc4\.gz$/.test(metadata.file) ||
+    !new RegExp(`^render/[a-zA-Z0-9_.-]+\\.${bc7 ? 'bc7' : 'bc4'}\\.gz$`).test(metadata.file) ||
     ![metadata.width, metadata.height].every(
       (v) => Number.isInteger(v) && v > 0 && v <= 16384 && v % 4 === 0,
     ) ||
-    metadata.gpuBytes !== (metadata.width * metadata.height) / 2 ||
+    metadata.gpuBytes !== (metadata.width * metadata.height) / (bc7 ? 1 : 2) ||
+    !Array.isArray(metadata.uvScale) ||
     metadata.uvScale.length !== 2 ||
     !metadata.uvScale.every((v) => Number.isFinite(v) && v > 0)
   )
@@ -119,9 +125,9 @@ export async function loadSunVisibility(
     [{ data: bytes, width: metadata.width, height: metadata.height }],
     metadata.width,
     metadata.height,
-    RED_RGTC1_Format,
+    bc7 ? RGBA_BPTC_Format : RED_RGTC1_Format,
   );
-  texture.name = 'CS2 original baked sun shadow red (BC4)';
+  texture.name = `CS2 original baked sun shadow (${bc7 ? 'BC7' : 'BC4'})`;
   texture.colorSpace = NoColorSpace;
   texture.flipY = false;
   texture.wrapS = texture.wrapT = ClampToEdgeWrapping;
@@ -130,6 +136,7 @@ export async function loadSunVisibility(
   texture.needsUpdate = true;
   return {
     texture,
+    channel: metadata.channel,
     scale: new Vector2(...metadata.uvScale),
     enabled: { value: 1 },
     status: 'pending',
@@ -144,16 +151,21 @@ export function patchSunVisibility(
   sun: SunLighting,
   renderer: WebGLRenderer,
 ) {
+  const texture = sun.texture;
+  if (!texture) return;
   if (
-    !renderer.extensions.has('EXT_texture_compression_rgtc') ||
-    renderer.capabilities.maxTextureSize <
-      Math.max(sun.texture.image.width, sun.texture.image.height)
+    !renderer.extensions.has(
+      texture.format === RGBA_BPTC_Format
+        ? 'EXT_texture_compression_bptc'
+        : 'EXT_texture_compression_rgtc',
+    ) ||
+    renderer.capabilities.maxTextureSize < Math.max(texture.image.width, texture.image.height)
   ) {
     sun.status = 'unsupported';
     return;
   }
   sun.status = 'active';
-  shader.uniforms.cs2SunShadow = { value: sun.texture };
+  shader.uniforms.cs2SunShadow = { value: texture };
   shader.uniforms.cs2SunUvScale = { value: sun.scale };
   shader.uniforms.cs2SunEnabled = sun.enabled;
   shader.vertexShader = `attribute vec2 cs2LightUv; uniform vec2 cs2SunUvScale; varying vec2 vCs2LightUv;\n${shader.vertexShader}`;
@@ -166,7 +178,7 @@ export function patchSunVisibility(
     'getDirectionalLightInfo( directionalLight, directLight );',
     `getDirectionalLightInfo( directionalLight, directLight );
     #if ( UNROLLED_LOOP_INDEX == 0 )
-      directLight.color *= mix(1.0, clamp(1.0 - texture2D(cs2SunShadow, vCs2LightUv).r, 0.0, 1.0), cs2SunEnabled);
+      directLight.color *= mix(1.0, clamp(1.0 - texture2D(cs2SunShadow, vCs2LightUv).${'rgba'[sun.channel ?? 0]}, 0.0, 1.0), cs2SunEnabled);
     #endif`,
   );
   shader.fragmentShader = shader.fragmentShader.replace('#include <lights_fragment_begin>', lights);
