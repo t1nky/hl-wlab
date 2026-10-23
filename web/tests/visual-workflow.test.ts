@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { test } from 'vitest';
 import { cs2Lighting } from '../src/render/lighting';
 import { updatePointGeometry } from '../src/render/points';
-import { viewPixelRatio } from '../src/render/quality';
+import { resizeView, viewPixelRatio } from '../src/render/quality';
 import { disposeGroup } from '../src/render/resources';
 import { setMapShadows } from '../src/render/shadows';
 
@@ -53,6 +53,32 @@ test('walking physical pixels stay within budget at 4K/HiDPI without changing or
     }
   assert.equal(viewPixelRatio(1280, 800, 2, false, false, false), 2);
   assert.equal(viewPixelRatio(1280, 800, 2, true, true, false), 0.75);
+});
+
+test('view resizing updates the drawing buffer once and leaves unchanged views intact', () => {
+  let width = 1280,
+    height = 800,
+    ratio = 1;
+  const allocations: number[][] = [];
+  const renderer = {
+    getSize: (target: THREE.Vector2) => target.set(width, height),
+    getPixelRatio: () => ratio,
+    setDrawingBufferSize: (w: number, h: number, r: number) => {
+      allocations.push([w, h, r]);
+      width = w;
+      height = h;
+      ratio = r;
+    },
+  };
+  assert.equal(resizeView(renderer, 1280, 800, 1), false);
+  assert.equal(allocations.length, 0);
+  assert.equal(resizeView(renderer, 2560, 1440, 0.75), true);
+  assert.deepEqual(allocations, [[2560, 1440, 0.75]]);
+  assert.equal(resizeView(renderer, 2560, 1440, 0.75), false);
+  assert.equal(allocations.length, 1);
+  // Equal physical dimensions still need a logical viewport/aspect update.
+  assert.equal(resizeView(renderer, 1280, 720, 1.5), true);
+  assert.deepEqual(allocations[1], [1280, 720, 1.5]);
 });
 
 test('display lighting follows Inferno sunlight in Z-up space without extra shadow passes', () => {

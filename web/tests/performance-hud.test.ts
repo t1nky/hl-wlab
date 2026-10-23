@@ -50,7 +50,7 @@ it('counts actual rendered frames and CPU time without making idle work', () => 
   const { gl, monitor } = context(false);
   monitor.setEnabled(true, 0);
   for (let i = 0; i < 60; i++) {
-    monitor.beginFrame(i * 16);
+    monitor.beginFrame((i * 1000) / 60);
     monitor.endFrame(2);
   }
   expect(monitor.sample(1000)).toEqual({ fps: 60, cpuMs: 2, gpuMs: undefined });
@@ -60,6 +60,32 @@ it('counts actual rendered frames and CPU time without making idle work', () => 
   monitor.beginFrame(2100);
   monitor.endFrame(100);
   expect(monitor.sample(3000).fps).toBe(0);
+});
+
+it('does not turn 60 FPS into 30 when movement starts halfway through a HUD interval', () => {
+  const { monitor } = context(false);
+  monitor.setEnabled(true, 0);
+  for (let i = 0; i < 15; i++) {
+    monitor.beginFrame(250 + (i * 1000) / 60);
+    monitor.endFrame(1);
+  }
+  expect(monitor.sample(500).fps).toBeCloseTo(60);
+  expect(monitor.sample(1000).fps).toBe(0);
+  for (let i = 0; i < 15; i++) {
+    monitor.beginFrame(1250 + (i * 1000) / 60);
+    monitor.endFrame(1);
+  }
+  expect(monitor.sample(1500).fps).toBeCloseTo(60);
+});
+
+it('includes actual stalls between rendered frames in the FPS reading', () => {
+  const { monitor } = context(false);
+  monitor.setEnabled(true, 0);
+  for (const at of [0, 1000 / 60, 1000 / 30, 100, 100 + 1000 / 60]) {
+    monitor.beginFrame(at);
+    monitor.endFrame(1);
+  }
+  expect(monitor.sample(500).fps).toBeCloseTo(4000 / (100 + 1000 / 60));
 });
 
 it('reads GPU results only after completion, converts nanoseconds, and rejects disjoint results', () => {

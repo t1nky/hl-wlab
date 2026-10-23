@@ -1,3 +1,22 @@
+import { Vector2, type WebGLRenderer } from 'three';
+
+const currentSize = new Vector2();
+
+/** Change size and pixel ratio together, without clearing an unchanged canvas
+ * or allocating an intermediate drawing buffer at the previous logical size. */
+export function resizeView(
+  renderer: Pick<WebGLRenderer, 'getSize' | 'getPixelRatio' | 'setDrawingBufferSize'>,
+  width: number,
+  height: number,
+  ratio: number,
+) {
+  renderer.getSize(currentSize);
+  if (currentSize.x === width && currentSize.y === height && renderer.getPixelRatio() === ratio)
+    return false;
+  renderer.setDrawingBufferSize(width, height, ratio);
+  return true;
+}
+
 /** Physical pixel budget bounds walking raster cost on large/high-DPI displays. */
 export function viewPixelRatio(
   width: number,

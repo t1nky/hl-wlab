@@ -4,6 +4,36 @@ Experimental branch `cs2-poc`. Run locally; do not deploy the prepared map.
 This branch now runs CS1.6 and CS2 in the original application's shell. Main
 remains unchanged; no merge or deployment is performed.
 
+## Frame pacing and first-view stalls
+
+The October 23 pass was measured on the local Ryzen 7 9800X3D / RTX 5070 Ti,
+using Chrome's D3D11 renderer and a 180 Hz display. At a 2560×1440 render size,
+the first fast-turn/flight route around Dust2 CT spawn had a **72.19 ms** frame
+gap. After preparing map shaders, textures and off-camera geometry before
+navigation, the same route measured **60.00 FPS**, **16.72 ms p99** and
+**16.74 ms maximum** frame intervals over 9.5 seconds. A separate native Shift+W
+flight with rapid turns measured 60.00 FPS, p99 16.72 ms and maximum 16.93 ms.
+Steady walking also measured 60 FPS; switching into Walk can still incur a
+one-time canvas resize cost. These are sampled routes, not a guarantee against
+OS scheduling, other GPU applications or every future scene.
+
+GPU preparation added approximately **0.42–0.49 seconds** to Dust2 loading in
+these runs. It retains original geometry, texture resolution and baked lighting;
+it does not add passes during navigation. Both Fly and Walk fog variants are
+prepared. Uploads yield to the UI, shader readiness polling checks cancellation,
+and scratch-scene/culling/viewport state is restored on completion or failure.
+Disposal remains the map owner's responsibility.
+Canvas size and pixel ratio are updated together once, and unchanged view sizes
+skip drawing-buffer resets.
+
+The old limiter could repeatedly skip alternate 60 Hz callbacks with just
+0.6 ms of phase jitter. Its allowance is now 2 ms while retaining a 60 Hz
+deadline; tests cover jittered 60–360 Hz callbacks. The HUD now measures frame
+cadence within its sample, avoiding a false 30 FPS reading when 60 FPS movement
+starts halfway through a refresh interval. Real gaps between frames remain in
+the measurement; static scenes still sleep. Local measurements are ignored in
+`.local/fps-audit/`.
+
 ## Performance and lighting pass
 
 The October 22, 2026 pass compares against `334ac4b` using the same installed

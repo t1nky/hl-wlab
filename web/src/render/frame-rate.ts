@@ -1,6 +1,9 @@
 const INTERVAL = 1000 / 60;
-// Browser timestamps can straddle a refresh boundary by a fraction of a millisecond.
-const TOLERANCE = 0.5;
+// An early callback must not lose a whole 60 Hz refresh. A sub-millisecond
+// alternating phase otherwise repeatedly resets the deadline and locks to 30.
+// The deadline still advances by a full interval, so this is jitter allowance,
+// not a higher sustained frame cap.
+const TOLERANCE = 2;
 
 /** Caps active rendering at 60 Hz without scheduling work for an idle scene. */
 export class FrameLimiter {

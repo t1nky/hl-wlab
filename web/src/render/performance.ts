@@ -30,6 +30,8 @@ export class FrameMonitor {
   private pending: WebGLQuery[] = [];
   private nextQuery = 0;
   private frames = 0;
+  private firstFrameAt = 0;
+  private lastFrameAt = 0;
   private cpu = 0;
   private since = 0;
   private lastGpu?: number;
@@ -66,6 +68,10 @@ export class FrameMonitor {
   }
 
   beginFrame(now: number) {
+    if (this.enabled) {
+      if (!this.frames) this.firstFrameAt = now;
+      this.lastFrameAt = now;
+    }
     if (
       !this.enabled ||
       !this.extension ||
@@ -121,7 +127,14 @@ export class FrameMonitor {
       }
     }
     const sample = {
-      fps: this.frames ? (1000 * this.frames) / Math.max(1, now - this.since) : 0,
+      // Sample actual frame cadence. Counting against the whole HUD interval
+      // incorrectly reports 30 when 60 FPS movement starts halfway through it.
+      fps:
+        this.frames > 1
+          ? (1000 * (this.frames - 1)) / Math.max(1, this.lastFrameAt - this.firstFrameAt)
+          : this.frames
+            ? 1000 / Math.max(1, now - this.since)
+            : 0,
       cpuMs: this.frames ? this.cpu / this.frames : undefined,
       gpuMs: now - this.lastGpuAt < 1500 ? this.lastGpu : undefined,
     };

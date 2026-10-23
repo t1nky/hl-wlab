@@ -3,6 +3,7 @@ import { targetDamage } from '../../cs2/damage';
 import type { WalkState } from '../../cs2/movement';
 import { packageBase } from '../../cs2/package';
 import { loadRenderMap, type RenderMap } from '../../cs2/render-map';
+import { warmRenderMap } from '../../cs2/render-warmup';
 import { CS2_ROW, classifyCs2, cs2Sample, type ScanStats } from '../../cs2/scan';
 import { type Metadata, required, type Shot, type V3 } from '../../cs2/types';
 import { cs2Lighting } from '../render/lighting';
@@ -47,6 +48,7 @@ export class Cs2Game implements GameAnalysis {
   readonly walker: NavigationBody;
   meta!: Metadata;
   render?: RenderMap;
+  graphicsTiming?: Awaited<ReturnType<typeof warmRenderMap>>;
   target: V3 = [457.28, 1846.2, 184];
   rows: Float32Array = new Float32Array();
   player!: PlayerPackage;
@@ -197,6 +199,21 @@ export class Cs2Game implements GameAnalysis {
       this.state = state;
     }
     return required(this.state);
+  }
+  async prepareRender(
+    renderer: THREE.WebGLRenderer,
+    camera: THREE.Camera,
+    fogs: (THREE.Fog | THREE.FogExp2 | null)[],
+    progress?: (message: string) => void,
+  ) {
+    this.graphicsTiming = await warmRenderMap(
+      renderer,
+      this.group,
+      camera,
+      fogs,
+      this.abort.signal,
+      progress,
+    );
   }
   async deploy(eye: V3) {
     this.movement.pause();

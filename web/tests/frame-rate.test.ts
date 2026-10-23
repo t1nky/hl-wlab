@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { FrameLimiter } from '../src/render/frame-rate';
 
-it.each([50, 60, 75, 120, 144, 165, 240])(
+it.each([50, 60, 75, 90, 120, 144, 165, 180, 240, 360])(
   'caps a %i Hz display at 60 FPS without halving 60 Hz refresh',
   (refresh) => {
     const limiter = new FrameLimiter();
@@ -18,6 +18,25 @@ it('tolerates refresh timestamp jitter without dropping to 30 FPS', () => {
   for (let i = 0; i < 600; i++) if (limiter.ready((i * 1000) / 60 + (i % 2 ? -0.2 : 0.2))) frames++;
   expect(frames).toBe(600);
 });
+
+it.each([0.6, 1, 1.5])('does not lock to 30 FPS with %i ms early 60 Hz callbacks', (early) => {
+  const limiter = new FrameLimiter();
+  let frames = 0;
+  for (let i = 0; i < 600; i++) if (limiter.ready((i * 1000) / 60 - (i % 2 ? early : 0))) frames++;
+  expect(frames).toBe(600);
+});
+
+it.each([90, 120, 144, 165, 180, 240, 360])(
+  'keeps the 60 FPS cap with jitter at %i Hz',
+  (refresh) => {
+    const limiter = new FrameLimiter();
+    let frames = 0;
+    for (let i = 0; i < refresh * 10; i++)
+      if (limiter.ready((i * 1000) / refresh + (i % 2 ? -0.8 : 0.8))) frames++;
+    expect(frames).toBeGreaterThanOrEqual(599);
+    expect(frames).toBeLessThanOrEqual(601);
+  },
+);
 
 it('resumes immediately after idle and skips missed frames instead of catching up', () => {
   const limiter = new FrameLimiter();

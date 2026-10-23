@@ -4,7 +4,7 @@ import { required } from './engine/types.ts';
 import { FrameLimiter } from './render/frame-rate.ts';
 import { CS2_BACKGROUND } from './render/lighting.ts';
 import { createPointMaterial, updatePointGeometry } from './render/points.ts';
-import { viewPixelRatio } from './render/quality.ts';
+import { resizeView, viewPixelRatio } from './render/quality.ts';
 import { disposeGroup } from './render/resources.ts';
 import { setMapShadows } from './render/shadows.ts';
 import type { BookmarkState } from './storage/bookmarks.ts';
@@ -85,6 +85,7 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 const scene = new THREE.Scene(),
   camera = new THREE.PerspectiveCamera(70, 1, 1, 40000),
   viewTarget = new THREE.Vector3(1000, 250, 250);
+const cs2WalkFog = new THREE.Fog(CS2_BACKGROUND, 6553.6, 8192);
 const performanceHUD = createPerformanceHUD(renderer, scene, $('viewport'));
 import.meta.hot?.dispose(() => performanceHUD.dispose());
 const glContext = renderer.getContext();
@@ -824,20 +825,17 @@ function applyGameView() {
   // Keep distant sightlines visible in Walk; raster cost stays bounded by the pixel budget.
   camera.far = cs2 && mode === 'walk' ? 8192 : 40000;
   camera.updateProjectionMatrix();
-  scene.fog = cs2 && mode === 'walk' ? new THREE.Fog(CS2_BACKGROUND, 6553.6, 8192) : null;
+  scene.fog = cs2 && mode === 'walk' ? cs2WalkFog : null;
   scene.background = cs2 ? new THREE.Color(CS2_BACKGROUND) : $('sky').checked ? skyTexture : null;
   sizeViewport();
 }
 function sizeViewport() {
   const w = canvas.clientWidth,
     h = canvas.clientHeight;
-  renderer.setPixelRatio(
-    viewPixelRatio(w, h, devicePixelRatio, !!cs2, !!softwareGPU, mode === 'walk'),
-  );
-  renderer.setSize(w, h, false);
+  const ratio = viewPixelRatio(w, h, devicePixelRatio, !!cs2, !!softwareGPU, mode === 'walk');
+  resizeView(renderer, w, h, ratio);
   camera.aspect = w / Math.max(1, h);
   camera.updateProjectionMatrix();
-  const ratio = renderer.getPixelRatio();
   pointMaterial.uniforms.scale.value = (h * ratio) / 2;
   pointMaterial.uniforms.sizeRange.value.set(3 * ratio, 16 * ratio);
   for (const marker of [selectionMarker, targetMarker])
@@ -1155,6 +1153,10 @@ async function switchGame(next: string, mapId?: string) {
         document.documentElement.dataset.ready = 'false';
       } else {
         await game.load((message) => {
+          $('assetsStatus').textContent = message;
+        });
+        game.textures($('textures').checked);
+        await game.prepareRender(renderer, camera, [null, cs2WalkFog], (message) => {
           $('assetsStatus').textContent = message;
         });
         scene.add(game.group);

@@ -23,7 +23,7 @@ export function createPerformanceHUD(
   const values = new Map<string, HTMLElement>();
   const labels = new Map<string, HTMLElement>();
   for (const [id, label, title] of [
-    ['fps', 'FPS', 'Rendered frames per second. Static views sleep instead of redrawing.'],
+    ['fps', 'FPS', 'Rendered frame cadence. Static views sleep instead of redrawing.'],
     [
       'cpu',
       'CPU',
