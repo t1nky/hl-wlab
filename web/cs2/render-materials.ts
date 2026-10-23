@@ -37,6 +37,7 @@ export interface Cs2Material {
   tint?: { amount: number; material: [number, number, number]; base: LayerTint };
   uv: UvSettings;
   layers: { texture: number; uv: UvSettings; tint?: LayerTint }[];
+  genericBlend?: { mode: number; softness: number; mask?: Cs2Mask; softnessMask?: Cs2Mask };
 }
 
 export interface LayerTint {
@@ -144,6 +145,18 @@ export function diffuseMaterial(
     shader.fragmentShader = `uniform float cs2TexturesEnabled;\n${shader.fragmentShader}`;
     let vertex = layers.length ? 'vCs2Blend = cs2Blend;\n' : '';
     let fragment = '';
+    if (settings.genericBlend?.mode) {
+      const blend = settings.genericBlend;
+      if (maskTextures.length !== (blend.mode === 1 ? 2 : 1))
+        throw Error('Missing generic blend modulation');
+      shader.uniforms.cs2BlendMask = { value: maskTextures[0] };
+      shader.uniforms.cs2BlendSoftness = { value: blend.softness };
+      shader.fragmentShader = `uniform sampler2D cs2BlendMask; uniform float cs2BlendSoftness;\n${shader.fragmentShader}`;
+      if (blend.mode === 1) {
+        shader.uniforms.cs2BlendSoftnessMask = { value: maskTextures[1] };
+        shader.fragmentShader = `uniform sampler2D cs2BlendSoftnessMask;\n${shader.fragmentShader}`;
+      }
+    }
     if (settings.tint) {
       const tintSettings = settings.tint;
       // Keep the batch color as model tint, separate from vertex paint. Its black
@@ -223,14 +236,35 @@ ${shader.fragmentShader}`;
     layers.forEach((layer, i) => {
       const name = `cs2Layer${i}`;
       shader.uniforms[name] = { value: layerTextures[i] };
-      shader.uniforms[`${name}Uv`] = { value: uvMatrix(layer.uv) };
+      shader.uniforms[`${name}Uv`] = {
+        value: settings.genericBlend
+          ? new Matrix3().set(layer.uv.scale[0], 0, 0, 0, layer.uv.scale[1], 0, 0, 0, 1)
+          : uvMatrix(layer.uv),
+      };
       shader.vertexShader = `uniform mat3 ${name}Uv; varying vec2 v${name}Uv;\n${shader.vertexShader}`;
       shader.fragmentShader = `uniform sampler2D ${name}; varying vec2 v${name}Uv;\n${shader.fragmentShader}`;
-      vertex += `v${name}Uv = (${name}Uv * vec3(${layer.uv.channel === 1 ? 'uv1' : 'uv'}, 1.0)).xy;\n`;
+      // Generic terrain scales the already transformed primary UV, unlike
+      // environment layers which each transform the raw mesh UV independently.
+      vertex += settings.genericBlend
+        ? `#ifdef USE_MAP\nv${name}Uv = (${name}Uv * vec3(vMapUv, 1.0)).xy;\n#else\nv${name}Uv = vec2(0.0);\n#endif\n`
+        : `v${name}Uv = (${name}Uv * vec3(${layer.uv.channel === 1 ? 'uv1' : 'uv'}, 1.0)).xy;\n`;
       const color = settings.tint
         ? `cs2TintLayer(texture2D(${name}, v${name}Uv), ${maskTextures.length ? `texture2D(cs2Mask${i + 1}, v${name}Uv).r` : `texture2D(${name}, v${name}Uv).a`}, cs2LayerTint${i}, diffuse * vCs2ModelTint, cs2Paint, cs2LayerTint${i}Correction, cs2LayerTint${i}TintedCorrection, cs2LayerTint${i}Unmasked)`
         : `diffuse * texture2D(${name}, v${name}Uv).rgb`;
-      fragment += `diffuseColor.rgb = mix(diffuseColor.rgb, ${color}, clamp(vCs2Blend.${i === 0 ? 'x' : 'y'}, 0.0, 1.0));\n`;
+      let weight = `clamp(vCs2Blend.${i === 0 ? 'x' : 'y'}, 0.0, 1.0)`;
+      if (settings.genericBlend?.mode) {
+        const softness =
+          settings.genericBlend.mode === 1
+            ? `texture2D(cs2BlendSoftnessMask, v${name}Uv).r`
+            : 'cs2BlendSoftness';
+        fragment += `float cs2Mask = texture2D(cs2BlendMask, v${name}Uv).r;
+          float cs2Softness = ${softness};
+          float cs2Low = max(0.0, cs2Mask - cs2Softness);
+          float cs2High = min(1.0, cs2Mask + cs2Softness);
+          float cs2Weight = cs2High > cs2Low ? smoothstep(cs2Low, cs2High, ${weight}) : step(cs2Mask, ${weight});\n`;
+        weight = 'cs2Weight';
+      }
+      fragment += `diffuseColor.rgb = mix(diffuseColor.rgb, ${color}, ${weight});\n`;
     });
     shader.vertexShader = shader.vertexShader.replace(
       '#include <uv_vertex>',
@@ -242,6 +276,6 @@ ${shader.fragmentShader}`;
     );
   };
   material.customProgramCacheKey = () =>
-    `cs2-layers-${settings?.layers.map((l) => l.uv.channel).join('-') ?? ''}-tint-${!!settings?.tint}-masks-${maskTextures.length}-sun-${sun?.texture?.format ?? 'none'}-${sun?.channel ?? 0}-irradiance-${!!sun?.irradiance}`;
+    `cs2-layers-${settings?.layers.map((l) => l.uv.channel).join('-') ?? ''}-generic-${settings?.genericBlend?.mode ?? 'none'}-tint-${!!settings?.tint}-masks-${maskTextures.length}-sun-${sun?.texture?.format ?? 'none'}-${sun?.channel ?? 0}-irradiance-${!!sun?.irradiance}`;
   return material;
 }

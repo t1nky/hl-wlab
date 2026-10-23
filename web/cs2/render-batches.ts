@@ -57,6 +57,7 @@ function* prepareStaticMap(group: Group) {
       blending: [material.blending, material.blendSrc, material.blendDst, material.blendEquation],
       shader: material.customProgramCacheKey(),
       tint: material.userData.cs2?.tint,
+      genericBlend: material.userData.cs2?.genericBlend,
       masks: material.userData.cs2Masks?.map((texture: { uuid: string }) => texture.uuid),
       sun: material.userData.cs2Sun?.texture?.uuid,
       irradiance: material.userData.cs2Sun?.irradiance?.texture.uuid,

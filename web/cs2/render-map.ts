@@ -363,7 +363,13 @@ export async function loadRenderMap(
                 return maskTexture(layer.mask);
               }),
             )
-          : [];
+          : settings?.genericBlend?.mask
+            ? await Promise.all(
+                [settings.genericBlend.mask, settings.genericBlend.softnessMask]
+                  .filter((mask): mask is Cs2Mask => !!mask)
+                  .map(maskTexture),
+              )
+            : [];
         const variants = new Map<boolean, Material>();
         for (const lit of modes.get(source) ?? []) {
           const material = diffuseMaterial(

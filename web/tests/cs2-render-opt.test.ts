@@ -6,6 +6,7 @@ import {
   BoxGeometry,
   Color,
   Group,
+  type Matrix3,
   Matrix4,
   Mesh,
   MeshLambertMaterial,
@@ -41,6 +42,74 @@ const settings: Cs2Material = {
 };
 
 describe('CS2 render optimization correctness', () => {
+  it.each([0, 1, 2, 3])('blends generic terrain layers using source modulation mode %i', (mode) => {
+    const source = new MeshStandardMaterial({ map: new Texture(), color: 0xaabbcc });
+    const generic: Cs2Material = {
+      ...settings,
+      shader: 'csgo_lightmappedgeneric.vfx',
+      blendMode: 0,
+      opacity: 1,
+      uv: { ...identityUv, scale: [2, 3], offset: [0.2, 0.1], rotation: 35 },
+      layers: [{ texture: 0, uv: { ...identityUv, scale: [4, 5] } }],
+      genericBlend: { mode, softness: 0.2 },
+    };
+    const masks = Array.from({ length: mode === 1 ? 2 : mode ? 1 : 0 }, () => new Texture());
+    const layer = new Texture();
+    const material = diffuseMaterial(source, generic, [layer], undefined, masks);
+    const compile = () => {
+      const shader = {
+        vertexShader: ShaderLib.lambert.vertexShader,
+        fragmentShader: ShaderLib.lambert.fragmentShader,
+        uniforms: {},
+      } as WebGLProgramParametersWithUniforms;
+      material.onBeforeCompile(shader, {} as WebGLRenderer);
+      return shader;
+    };
+    const shader = compile();
+    // Secondary UVs scale the transformed primary UV, rather than rotating
+    // a second time or scaling about a different pivot.
+    expect(shader.vertexShader).toContain('(cs2Layer0Uv * vec3(vMapUv, 1.0)).xy');
+    const transform = shader.uniforms.cs2Layer0Uv.value as Matrix3;
+    const uv = new Vector2(0.3, 0.7).applyMatrix3(uvMatrix(generic.uv));
+    expect(uv.clone().applyMatrix3(transform).toArray()).toEqual([uv.x * 4, uv.y * 5]);
+    expect(shader.uniforms.cs2Layer0.value).toBe(layer);
+    expect(shader.fragmentShader).toContain('diffuse * texture2D(cs2Layer0, vcs2Layer0Uv).rgb');
+    if (mode) {
+      expect(shader.uniforms.cs2BlendMask.value).toBe(masks[0]);
+      expect(shader.uniforms.cs2BlendSoftness.value).toBe(0.2);
+      expect(shader.fragmentShader).toContain('smoothstep(cs2Low, cs2High');
+      expect(shader.fragmentShader).toContain('step(cs2Mask');
+      if (mode === 1) expect(shader.uniforms.cs2BlendSoftnessMask.value).toBe(masks[1]);
+      else expect(shader.uniforms.cs2BlendSoftnessMask).toBeUndefined();
+    } else {
+      expect(shader.uniforms.cs2BlendMask).toBeUndefined();
+      expect(shader.fragmentShader).toContain('clamp(vCs2Blend.x, 0.0, 1.0)');
+    }
+    // Removing map textures must leave both vertex and fragment shader valid.
+    material.map = null;
+    const untextured = compile();
+    expect(untextured.vertexShader).toContain('#ifdef USE_MAP\nvcs2Layer0Uv =');
+    expect(untextured.vertexShader).toContain('vcs2Layer0Uv = vec2(0.0)');
+    expect(untextured.fragmentShader).toContain('#ifdef USE_MAP');
+    expect(material.customProgramCacheKey()).toContain(`generic-${mode}`);
+  });
+  it('does not batch different generic modulation softness into one material', () => {
+    const group = new Group();
+    const map = new Texture();
+    for (const softness of [0.1, 0.9]) {
+      const source = new MeshStandardMaterial({ map });
+      const generic: Cs2Material = {
+        ...settings,
+        blendMode: 0,
+        layers: [],
+        genericBlend: { mode: 2, softness },
+      };
+      source.userData.cs2 = generic;
+      group.add(new Mesh(new BoxGeometry(), diffuseMaterial(source, generic)));
+    }
+    expect(batchStaticMap(group).batches).toBe(0);
+    disposeRenderGroup(group);
+  });
   it('guards map-dependent tint code when the Textures toggle removes the base map', () => {
     const input = new MeshStandardMaterial({ map: new Texture() });
     const tinted: Cs2Material = {

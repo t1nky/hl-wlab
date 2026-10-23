@@ -53,6 +53,11 @@ internal static class RenderExport
                     if (material.TextureParams.TryGetValue("g_tColor2", out var second)) layers.Add(second);
                     if (material.IntParams.GetValueOrDefault("F_ENABLE_LAYER_3") > 0 && material.TextureParams.TryGetValue("g_tColor3", out var third)) layers.Add(third);
                 }
+                if (material.ShaderName == "csgo_lightmappedgeneric.vfx" && material.IntParams.GetValueOrDefault("F_LAYERS") > 0) {
+                    if (!material.TextureParams.TryGetValue("g_tLayer2Color", out var second))
+                        throw new InvalidDataException("Missing generic blend layer: " + file);
+                    layers.Add(second);
+                }
                 var info = new MaterialInfo(file, color, alpha, material.ShaderName, blend,
                     material.FloatParams.GetValueOrDefault("g_flAlphaTestReference", 0.5f),
                     material.FloatParams.GetValueOrDefault("g_flOpacityScale", 1f),
@@ -196,23 +201,24 @@ internal static class RenderExport
                             ["mask"] = AddMask(source.Textures[$"g_tHeight{layer}"]),
                         };
                     }
-                    JsonObject AddMask(string maskPath) {
-                        if (!masks.TryGetValue(maskPath, out var mask)) {
+                    JsonObject AddMask(string maskPath, int channel = 1) {
+                        var maskKey = maskPath + "|" + channel;
+                        if (!masks.TryGetValue(maskKey, out var mask)) {
                             using var resource = rawLoader.LoadFileCompiled(maskPath);
                             if (resource?.DataBlock is not Texture data) throw new InvalidDataException("Missing tint mask: " + maskPath);
                             var level = 0u;
                             while (level + 1 < data.NumMipLevels && Math.Max(data.Width >> (int)level, data.Height >> (int)level) > TextureSize) level++;
                             using var bitmap = data.GenerateBitmap(mipLevel: level);
-                            var green = bitmap.Pixels.Select(pixel => pixel.Green).ToArray();
-                            var hash = PixelHash(bitmap.Width, bitmap.Height, green);
+                            var bytes = bitmap.Pixels.Select(pixel => channel switch { 0 => pixel.Red, 1 => pixel.Green, 3 => pixel.Alpha, _ => throw new InvalidDataException("Unsupported material mask channel") }).ToArray();
+                            var hash = PixelHash(bitmap.Width, bitmap.Height, bytes);
                             if (!maskContents.TryGetValue(hash, out mask)) {
                                 var file = "mask-" + hash[..20] + ".r8.gz";
                                 using (var stream = File.Create(Path.Combine(folder, file)))
-                                using (var gzip = new GZipStream(stream, CompressionLevel.SmallestSize)) gzip.Write(green);
+                                using (var gzip = new GZipStream(stream, CompressionLevel.SmallestSize)) gzip.Write(bytes);
                                 mask = new MaskInfo(file, bitmap.Width, bitmap.Height, new FileInfo(Path.Combine(folder, file)).Length);
                                 maskContents[hash] = mask;
                             }
-                            masks[maskPath] = mask;
+                            masks[maskKey] = mask;
                         }
                         return new JsonObject { ["file"] = "render/" + mask.File, ["width"] = mask.Width, ["height"] = mask.Height,
                             ["format"] = "R8_UNORM", ["gpuBytes"] = mask.GpuBytes, ["bytes"] = mask.Bytes };
@@ -270,6 +276,18 @@ internal static class RenderExport
                         var settings = new JsonObject { ["texture"] = AddTexture(layer, false, layerIndex + 2), ["uv"] = UvSettings(source, (layerIndex + 2).ToString()) };
                         if (maskedTint) settings["tint"] = TintSettings(layerIndex + 2, settings["texture"]!.GetValue<int>());
                         material["extras"]!["cs2"]!["layers"]!.AsArray().Add(settings);
+                    }
+                    if (source.Shader == "csgo_lightmappedgeneric.vfx" && source.Layers.Length > 0) {
+                        var mode = (int)source.Integers.GetValueOrDefault("F_FANCY_BLENDING");
+                        if (mode is < 0 or > 3) throw new InvalidDataException("Unsupported generic blend mode: " + mode);
+                        var blend = new JsonObject { ["mode"] = mode, ["softness"] = source.Floats.GetValueOrDefault("g_flBlendSoftness", 0.5f) };
+                        if (mode > 0) {
+                            if (!source.Textures.TryGetValue("g_tBlendModulation", out var modulation))
+                                throw new InvalidDataException("Missing generic blend modulation: " + source.Path);
+                            blend["mask"] = AddMask(modulation, mode == 3 ? 3 : 1);
+                            if (mode == 1) blend["softnessMask"] = AddMask(modulation, 0);
+                        }
+                        material["extras"]!["cs2"]!["genericBlend"] = blend;
                     }
                     if (maskedTint) {
                         // Retain instance color for BatchedMesh's existing per-instance color stream.
@@ -343,7 +361,7 @@ internal static class RenderExport
             totalBytes = files.Sum(f => f.bytes), files,
             warnings = warnings.Concat(new[] {
                 "Render geometry is for display only; separate vphys data drives shots and walking.",
-                "Base-color layers use vertex weights; baked lighting uses native BC4/BC7 sun visibility and bounded BC6H irradiance. Height blending, normal/roughness, directional irradiance and full Source shader parity omitted.",
+                "Generic terrain layers use TEXCOORD4 weights and original blend modulation channels. Environment height blending, normal/roughness, directional irradiance and full Source shader parity omitted. Baked lighting uses native BC4/BC7 sun visibility and bounded BC6H irradiance.",
                 "Opaque environment original RGBA and lossless shared R8 height-green masks drive runtime affine color correction, model tint and vertex paint. Shared overlays and other shader families remain approximations.",
                 "Static world-node surfaces only; unsupported atmospheric-effect proxies, entity-driven doors, breakables, movable props, skybox and live state omitted."
             }),

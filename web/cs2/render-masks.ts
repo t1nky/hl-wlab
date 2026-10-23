@@ -17,7 +17,7 @@ export interface Cs2Mask {
   bytes: number;
 }
 
-/** Exact height-green bytes, uploaded as one R8 channel without bitmap decode/readback. */
+/** Exact source mask channel bytes, uploaded as R8 without bitmap decode/readback. */
 export async function loadMaterialMask(
   metadata: Cs2Mask,
   version: string,

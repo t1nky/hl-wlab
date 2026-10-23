@@ -14,7 +14,7 @@ Weapon presets also reference the same ReGameDLL_CS tag's `regamedll/dlls/weapon
 
 This prototype has no connection to Valve and has no official accuracy certification.
 
-CS2 environment color-correction matrices, masked model-tint interpretation and
+CS2 generic terrain blending, environment color-correction matrices, masked model-tint interpretation and
 lighting-format handling reference MIT-licensed
 [ValveResourceFormat](https://github.com/ValveResourceFormat/ValveResourceFormat).
 The local importer pins version 20.1.7467. Its full notice is retained in

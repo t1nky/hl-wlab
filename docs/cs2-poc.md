@@ -67,6 +67,18 @@ shared across instance colors; masks are deduplicated lossless R8 textures.
 Unsupported atmospheric `csgo_effects` proxy polygons are omitted from the static
 analysis scene instead of appearing as opaque gray sheets. Collision is unchanged.
 
+Dust2's dark stone strip at the CT approach to mid was missing its sand layer.
+`csgo_lightmappedgeneric` materials with `F_LAYERS` now load `g_tLayer2Color`,
+scale the transformed base UV by `g_vTexCoordScale2`, and blend with TEXCOORD4.
+Fancy blend modes 1–3 use the original modulation texture: green mask/red
+softness, green mask/uniform softness, or alpha mask/uniform softness. These
+channels share the existing lossless R8 cache and disposal path. This adds no
+geometry or render pass. Batch signatures preserve the modulation parameters.
+Local checks verified all 60 layered Dust2 material paths and 83 per-material
+mask bindings against the installed originals (21,757,952 decoded bytes exact).
+Browser checks cover the reported ground and texture/shadow toggles; full Source
+lighting and shader parity remain outside this correction.
+
 Sun direction and color follow the selected map's `light_environment`. Authored
 BC6H irradiance uses a source mip bounded to 4096-square and replaces approximate hemisphere lighting on
 lightmapped surfaces, adding **16 MiB** and one lookup without another draw pass.
@@ -498,6 +510,7 @@ capped at 512 pixels, with simple diffuse browser lighting. Decal alpha-test,
 transparency and modulation modes are preserved, instead of forcing overlay alpha
 to opaque. UV channel, scale, pivot, rotation and offset are retained. Vertex paint
 uses alpha as tint strength; environment color layers blend using TEXCOORD4 weights.
+Generic terrain also applies its authored modulation mask and softness to those weights.
 Foliage COLOR channels encode wind rather than paint and are excluded. Other
 materials use vertex colors only when their shader enables that feature.
 Height-based blending, normal/roughness maps and skyboxes are omitted. Environment
