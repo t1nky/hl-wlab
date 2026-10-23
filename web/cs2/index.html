@@ -78,14 +78,15 @@
           <p>
             World vphys + separate static model physics. Physical hulls and per-triangle surface
             IDs, not render meshes. Closed mesh winding is required; inconsistent intersections
-            return indeterminate. Overlapping solids use the more resistant material. Scan checks a
-            32 × 32 × 72 box and flat support, but no route/navigation connectivity.
+            return indeterminate. Overlapping solids use the more resistant material. Scan uses
+            standing/crouching swept hulls on walkable floors, with no route/navigation
+            connectivity.
           </p>
           <p>
-            Damage uses an illustrative 24 × penetration thickness budget, local distance modifiers,
-            and damage modifiers as retention. This is not Valve’s post-2025 formula. Unknown
-            material values return indeterminate. No spread, ricochet, live breakage, armor, or
-            hitgroup simulation.
+            Quadratic impact/thickness loss uses Source units and local distance modifiers, checked
+            against the reported plaster overlays. Broader current-game parity is unverified.
+            Unknown material values return indeterminate. This diagnostic reports residual energy;
+            use the shared application for posed hitgroup and standard armor HP estimates.
           </p>
         </details>
         <p class="help">

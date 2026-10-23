@@ -44,8 +44,13 @@ assets or use Valve branding.
 The experimental CS2 backend uses ValveResourceFormat 20.1.7467 (MIT) for local
 VPK/resource/physics parsing and three-mesh-bvh 0.9.8 (MIT) for browser ray
 acceleration. Their notices are in `licenses/VRF-LICENSE.txt` and
-`licenses/THREE-MESH-BVH-LICENSE.txt`. No Valve engine source or
-ExternalAutoWallCS2 code is incorporated. CS2 game data and prepared collision
+`licenses/THREE-MESH-BVH-LICENSE.txt`. No Valve engine source is incorporated.
+The CS2 quadratic penetration math references ExternalAutoWallCS2 (MIT,
+Copyright (c) 2025 BLOOM), with Source-unit thickness, 0.16 impact fraction,
+incremental falloff and our own validated collision intervals. Its notice is
+retained in `licenses/ExternalAutoWallCS2-LICENSE.txt` and the browser's public
+licenses. None of its parser, BVH, geometry pairing or Python binding is used.
+CS2 game data and prepared collision
 packages remain in ignored local storage; they are not part of this program's
 source distribution.
 

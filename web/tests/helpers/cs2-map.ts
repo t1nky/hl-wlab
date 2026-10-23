@@ -17,7 +17,15 @@ export function fixture(boxes: Box[]) {
     binaryBytes: 0,
     vertexCount: 0,
     triangleCount: 0,
-    weapon: { name: 'AWP', damage: 115, penetration: 2.5, range: 8192, rangeModifier: 0.99 },
+    weapon: {
+      name: 'AWP',
+      damage: 115,
+      penetration: 2.5,
+      range: 8192,
+      rangeModifier: 0.99,
+      armorRatio: 1.95,
+      headshotMultiplier: 4,
+    },
     materials: [
       { name: 'concrete', hash: 0, distanceModifier: 1, damageModifier: 1, gameMaterial: null },
     ],

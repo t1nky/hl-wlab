@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { BoxGeometry, Vector3 } from 'three';
 import { describe, expect, it } from 'vitest';
 import { CollisionMap, estimate, hullSpan, meshSpans, unionSpans } from '../cs2/collision';
+import { targetDamage } from '../cs2/damage';
 import {
   decodeMap,
   type MapData,
@@ -11,6 +12,7 @@ import {
   type Shape,
   type Span,
 } from '../cs2/types';
+import { intersectTarget, type PlayerPackage, playerPose } from '../src/games/target';
 
 function fixture(kind: 'mesh' | 'hull' = 'mesh', bullet = true) {
   const box = new BoxGeometry(10, 200, 200);
@@ -46,7 +48,15 @@ function fixture(kind: 'mesh' | 'hull' = 'mesh', bullet = true) {
     binaryBytes: 0,
     vertexCount: positions.length / 3,
     triangleCount: indices.length / 3,
-    weapon: { name: 'AWP', damage: 115, penetration: 2.5, range: 8192, rangeModifier: 0.99 },
+    weapon: {
+      name: 'AWP',
+      damage: 115,
+      penetration: 2.5,
+      range: 8192,
+      rangeModifier: 0.99,
+      armorRatio: 1.95,
+      headshotMultiplier: 4,
+    },
     materials: [
       { name: 'wood', hash: 1, distanceModifier: 0.9, damageModifier: 0.6, gameMaterial: 'W' },
     ],
@@ -66,7 +76,7 @@ function fixture(kind: 'mesh' | 'hull' = 'mesh', bullet = true) {
 function span(enter: number, exit: number): Span {
   return { enter, exit, material: 0, exitMaterial: 0, shape: 0, startInside: false };
 }
-describe('CS2 collision and explicit surrogate', () => {
+describe('CS2 collision and quadratic penetration estimate', () => {
   for (const kind of ['mesh', 'hull'] as const) {
     it(`${kind}: oblique geometric entry/exit and winding`, () => {
       const { map } = fixture(kind);
@@ -209,7 +219,7 @@ describe('CS2 collision and explicit surrogate', () => {
       required(estimate([span(10, 30)], 100, meta, []).damage),
     );
     expect(estimate([span(10, 100)], 200, meta, []).status).toBe('blocked');
-    meta.materials[0].damageModifier = null;
+    meta.materials[0].distanceModifier = null;
     expect(estimate([span(10, 15)], 100, meta, []).status).toBe('indeterminate');
     expect(estimate([], 100, meta, ['bad geometry']).damage).toBeNull();
     map.dispose();
@@ -275,7 +285,57 @@ it.skipIf(!existsSync(`${local}map.json`))(
       reverse.spans[0].exit - reverse.spans[0].enter,
       5,
     );
-    expect(plaster.damage).toBeCloseTo(reverse.damage ?? -1, 5);
+    // Geometry is reciprocal. Damage need not be: the wall occupies a different
+    // point in the flight and falloff after the constant thickness loss differs.
+    expect(plaster.damage).toBeGreaterThan(66);
+    expect(plaster.damage).toBeLessThan(68);
+    expect(reverse.damage).toBeGreaterThan(66);
+    expect(reverse.damage).toBeLessThan(68);
+    // Exact getpos/angles supplied with the user's 47.8cm plaster + bot-kill overlay.
+    // Standing source eye = supplied feet +64. Physics gives 47.51cm (not 1:1).
+    const eye: [number, number, number] = [267.189392, 1604.769897, 183.359955];
+    const yaw = (51.279736 * Math.PI) / 180,
+      pitch = (-4.0146 * Math.PI) / 180;
+    const direction = new Vector3(
+      Math.cos(pitch) * Math.cos(yaw),
+      Math.cos(pitch) * Math.sin(yaw),
+      -Math.sin(pitch),
+    );
+    const end = new Vector3(...eye).addScaledVector(direction, 350).toArray() as [
+      number,
+      number,
+      number,
+    ];
+    const exact = map.trace(eye, end);
+    expect(exact.status).toBe('estimated-penetration');
+    expect(exact.issues).toEqual([]);
+    expect(exact.spans).toHaveLength(1);
+    expect((exact.spans[0].exit - exact.spans[0].enter) * 2.54).toBeCloseTo(47.5098, 3);
+    expect(exact.damage).toBeGreaterThan(68);
+    expect(exact.damage).toBeLessThan(70);
+    if (existsSync(`${local}player.json`)) {
+      const player: PlayerPackage = JSON.parse(readFileSync(`${local}player.json`, 'utf8'));
+      const posed = playerPose(player, [457.28, 1846.2, 136.025], 0, 0, 0);
+      const hit = required(intersectTarget(eye, end, posed));
+      expect(hit.group).toBe(1);
+      const raw = required(map.trace(eye, hit.point).damage);
+      expect(
+        targetDamage(
+          raw,
+          hit.group,
+          { armor: 0, armorValue: 100, armorRatio: 1, aimPoint: 'head' },
+          meta.weapon,
+        ),
+      ).toBe(275);
+      expect(
+        targetDamage(
+          raw,
+          hit.group,
+          { armor: 2, armorValue: 100, armorRatio: 1, aimPoint: 'head' },
+          meta.weapon,
+        ),
+      ).toBe(268);
+    }
     console.log(
       JSON.stringify({ map: meta.map, triangles: meta.triangleCount, buildMs, clear, wall }),
     );

@@ -31,6 +31,7 @@ function offlineShell(): Plugin {
         'OCTICONS-LICENSE.txt',
         'THREE-MESH-BVH-LICENSE.txt',
         'MESHOPTIMIZER-LICENSE.txt',
+        'ExternalAutoWallCS2-LICENSE.txt',
       ])
         files.push(`${base}licenses/${name}`);
       const version = createHash('sha256')

@@ -35,11 +35,12 @@ The shared scan button, stop button, result selection, walk-from-result, aim
 selector and filters operate through one analysis contract. Each backend declares
 weapons, worker choices, pose choices, coordinate semantics and supported features.
 CS2's existing weapon/worker controls are locked to AWP/one worker. Unsupported
-armor, MDL-only controls, bookmarks and import actions remain visibly disabled;
-there is no second CS2 inspector. Minimum damage is labelled **est.** for CS2
-(residual bullet damage), and **HP** for GoldSrc (posed hitgroup/armor effects).
+MDL-only controls, bookmarks and import actions remain visibly disabled;
+there is no second CS2 inspector. Minimum damage is labelled **HP est.** for CS2 and **HP** for GoldSrc. Both now
+filter posed target HP, with separate backend-specific armor rules.
 CS2 results intersect the shown capsules before tracing map obstruction to that
-hitpoint. Geometric hitgroup is reported separately; it does not multiply damage.
+hitpoint. The first geometric hitgroup scales residual damage before armor and final flooring.
+The inspector reports residual energy and target HP separately.
 The shared line renderer displays entry/exit crosses and solid intervals.
 
 **Spacing and radius now work in CS2.** Defaults are 24 units / 1,024 units,
@@ -52,14 +53,16 @@ route connectivity, a navmesh, match boundaries, other-player clearance or reach
 roof origins may also appear. Select **Crouching** to see crouched shootersthe
 default shared filter shows standing direct hits and wallbang estimates only.
 Indeterminate traces stay conservative and are inspectable using **No hit**.
-A saved minimum of 100 hides the penetration estimates in **Below min**; lower
-it to 1 when checking coverage. The minimum filter is shared between games.
+The minimum filter is shared between games. Its value now applies to estimated
+target HP; hidden weak-hit counts also appear in the filter status. Earlier versions
+incorrectly compared raw energy to that threshold and hid penetrating headshots.
 
 On installed build 2000935, the same coarse 64/768 test now finds 375 standing
 and 394 crouching origins, versus the previous implementation's 99 standing
 origins. The default 24/1024 scan finds 4,629 standing + 4,754 crouching origins;
-the local Bun smoke took 2.34 s. Its head-anchor results contain 597 standing
-clear paths and 401 standing penetration estimates. These counts depend on the
+the current local Bun smoke took 2.18 s. Its head-anchor results contain 597 standing
+clear paths and 430 standing penetration estimates. With no armor and a minimum of
+100 estimated HP, 408 of the penetrating paths remain visible. These counts depend on the
 selected target/anchor; they are simulator observations, not in-game validation.
 Run `bun run cs2:smoke:scan` to reproduce and record exact source/aim examples in
 ignored `.local/cs2/scan-smoke.json`. The default posed target's feet are
@@ -99,7 +102,8 @@ CS1.6's real Inferno/MDL load showed 20 hitboxes and 111 sequences; a frame-1
 T3 snapshots repeatedly timed out, so visual captures used the computer-use
 browser fallback. Chrome console error/warning counts were zero. Review images:
 `.local/cs2/qa/posed-cs2-standing.png` and `posed-cs2-crouching.png`.
-Public build/Pages audit, POC build, importer tests and all 125 web tests pass.
+Historical captures above used the earlier residual-energy filter. Current
+penetration/HP verification and screenshots are described below.
 
 ## Standalone diagnostic entry
 
@@ -165,7 +169,8 @@ prediction/acceleration parity. Existing entity-state omissions still apply.
 Only Inferno is supported by this small importer. NuGet restores the pinned
 MIT-licensed ValveResourceFormat 20.1.7467 and its dependencies; no game download
 is involved. Game files are opened read-only. No game process is started or
-controlled. No Python, engine decompilation, or ExternalAutoWallCS2 code is used.
+controlled. No Python or engine decompilation is used. Penetration math now references
+ExternalAutoWallCS2 with its MIT notice retained; its parser/BVH/bindings are not used.
 
 ## Use
 
@@ -325,22 +330,71 @@ Material distance/damage modifiers are read from local
 `surfaceproperties/surfaceproperties.vsurf_c`. Missing unresolved values remain
 unknown and yield indeterminate damage, rather than fabricated defaults.
 
-**Damage is an illustrative surrogate, not CS2's post-October-2025 simulation.**
-It has an effective-thickness budget of `24 × weapon.penetration`; thickness is
-divided by the lower entry/exit distance modifier. Damage starts at
-`weapon.damage × rangeModifier^(distance/500)`, multiplies by the lower damage
-modifier as retention for each contiguous obstacle, and decays by
-`exp(-effectiveThickness/budget)`. It stops beyond the budget, four obstacles,
-weapon range, blockbullets/sky, or damage below one. These interpretations and
-constants are not game-validated. Start-inside, target-inside, unresolved surfaces
-and inconsistent geometry return indeterminate. Physical thickness is separate
-from this estimate. The shared application intersects frozen real player hitboxes,
-but no hitgroup/armor damage multiplier, spread, ricochet or breakage is simulated.
+**Current damage is an estimate with a separate wall-loss and target-HP stage.**
+The previous exponential attenuation/effective-thickness budget was not a game
+model and understated this plaster shot. It has been replaced by a quadratic
+open-reference pattern checked against the user's server overlays:
 
-No CS2 session was controlled during verification. The user's offline screenshot
-shows plaster penetration and 48.9 cm thickness, consistent with the reported
-19.25 Source-unit interval at 2.54 cm/unit. Its damage differs from the surrogate.
-Exact game damage and general penetration success remain unvalidated.
+`loss = incoming * fraction + 11.25/(penetration * modifier) + thickness^2/(24 * modifier)`
+
+Thickness stays in Source units, never centimetres. Ordinary surfaces average
+entry/exit distance modifiers and use fraction 0.16. Same wood/cardboard family
+uses modifier 3; plastic 2; glass/grate uses 3 and fraction 0.05. When gameMaterial
+is absent the known surface-name family is used. These family overrides need
+broader current-game validation. Legacy damageModifier is preserved as source
+metadata but no longer incorrectly treated as retained energy. Missing distance
+modifiers remain unknown. Connected solids charge one impact and total squared
+thickness; mixed internal pieces conservatively use the most resistant pair.
+Flight falloff advances once from source to each entry and finally the hitpoint.
+Four obstacles, weapon range, blockbullets/sky and energy below one stop the ray.
+Start-inside, target-inside, missing properties and inconsistent meshes stay
+indeterminate. No engine binary was inspected or decompiled.
+
+At the posed target, actual first-hitgroup scales residual energy: head uses
+local weapon headshotMultiplier (AWP 4), stomach 1.25, legs 0.75, others 1.
+Standard armor uses local weapon armorRatio / 2 (AWP 1.95 / 2), helmet coverage
+for head, vest coverage for torso/arms/neck, no leg coverage, and armor depletion.
+Only the final HP is floored. Standard enemy damage-scale convars are assumed;
+heavy armor, friendly fire and customized server scales are not simulated.
+Best damage chooses the best final HP, rather than the largest residual energy.
+GoldSrc numeric damage and armor logic is unchanged.
+
+### User's exact plaster ray
+
+The user supplied:
+
+```text
+setpos_exact 267.189392 1604.769897 119.359955
+setang_exact -4.014600 51.279736 0
+```
+
+Assuming standing, source eye is feet +64, or
+`267.189392 1604.769897 183.359955`. The exact ray intersects plaster at
+253.1014 to 271.8061 units, giving **18.70465 units / 47.5098 cm**. The user's
+overlay shows **47.8 cm**; a roughly 0.29cm geometry/query discrepancy remains.
+From actual entry energy 114.4164 the model loses 45.5604, exits with 68.8560,
+and reaches the default posed head with **68.7809 residual energy**. The overlay
+shows 45.9 loss and 69 incoming at the next player impact, within roughly one
+damage point. Do not treat impact-overlay "DAMAGE APPLIED" as final player HP.
+
+With the default frozen target at `457.28 1846.2 136.025`, yaw/frame zero,
+that exact ray hits group 1 and estimates **275 HP unarmored / 268 HP with full
+helmet armor**. The real bot's exact origin, pose, armor, starting health and
+server damage event have not been supplied; those HP values are simulator
+predictions, not a measured server damage match.
+
+Two screenshot-only arithmetic regressions (independent of map geometry) also
+check the model: 47.8cm plaster at incoming115 gives loss45.909 / residual69.091;
+the user's earlier 48.9cm plaster at incoming114 gives loss46.73, matching its
+46.7 display. The reference code's 0.18 fraction and cm conversion do not match
+these observations and are not copied. Its position-stepping/triangle pairing
+are also not used. The full MIT attribution is retained.
+
+No live CS2 session was controlled. REA was inspected as an optional analysis
+framework; this correction uses resource data, open math and numerical/game-overlay
+comparison, without installing REA or analyzing proprietary engine binaries.
+General post-2025 penetration parity, material special cases, pose/IK fidelity,
+entity-driven props and exact server damage remain unverified.
 
 ## Verification and repeatable shots
 
@@ -353,7 +407,7 @@ bun run cs2:test:importer     # local C# math regressions, no game assets
 bun run check:repo            # audit staged index before committing
 ```
 
-Verified October 22, 2026: **125 tests passed, one private skybox-fixture skip**,
+Verified October 22, 2026: **131 tests passed, one private skybox-fixture skip**,
 plus 11 importer math tests. New regressions cover capsule/cap/tangent/start-inside
 rays, rotated boxes/bones, actual installed standing/crouch poses, MDL RLE frame
 spans/held samples, ramps, stacked floors, crouch-only clearance, direct-hit scan
@@ -408,10 +462,10 @@ installed-map shot in both directions. Ordinary closed-mesh/hull start-inside
 detection remains enabled.
 
 The corrected ray reports plaster ID 32, entry distance **670.201**, exit
-**689.451**, physical thickness **19.250** units, and **43.0 surrogate damage**.
-Forward/reverse wall thickness and surrogate damage agree. Raw entry position is
+**689.451**, physical thickness **19.250** units, and **66.75 estimated residual damage**.
+Forward/reverse wall thickness agrees; energy differs with wall location along the flight. Raw entry position is
 `427.975 1798.487 181.909`; exit is `438.042 1814.878 182.627`.
-This confirms the POC geometry bug, not exact in-game damage.
+This earlier test confirms the sky/geometry fix. The exact user ray above is the current damage regression.
 
 To compare on the user's existing offline Inferno server, equip the AWP, stand
 without crouching, and use:
@@ -437,7 +491,7 @@ documents these debug/position commands. No game-session commands were executed
 by the POC or agent. Local before/after reports and screenshot are in
 `.local/cs2/qa/reported-shot-*`.
 
-Actual-map simulator examples (Source coordinates; damage is surrogate-only):
+Historical pre-correction simulator examples (Source coordinates; old surrogate values):
 
 | Source eye | Target point | Result |
 | --- | --- | --- |

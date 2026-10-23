@@ -579,7 +579,7 @@
 }
 [data-design] #filters .inline {
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr) 34px;
+  grid-template-columns: max-content minmax(0, 1fr) max-content;
   min-height: 30px;
   font-size: 10px;
   gap: 8px;

@@ -437,8 +437,12 @@ function filterPoints() {
 }
 function updateFilterStatus() {
   const clipped = cut.constant < Number($('cut').max);
+  const below =
+    !$('showWeak').checked && $('countWeak').textContent !== '0'
+      ? ` · ${$('countWeak').textContent} hits below ${number('minDamage')} ${analysis().definition.damageUnit}`
+      : '';
   $('filterText').textContent = kind.length
-    ? `${fmt(shownCount)} of ${fmt(kind.length)} positions ${clipped ? 'match filters · cutaway on' : 'shown'}`
+    ? `${fmt(shownCount)} of ${fmt(kind.length)} positions ${clipped ? 'match filters · cutaway on' : 'shown'}${below}`
     : '';
 }
 function syncArmor() {
@@ -1137,6 +1141,7 @@ async function switchGame(next: string) {
     skyRevision++;
     setSky(null);
     gameUI(CS2);
+    syncArmor();
     library.setPrepared({
       name: 'de_inferno',
       note: 'Prepared local CS2 map. Update with bun run cs2:prepare --render and bun run cs2:prepare:player.',

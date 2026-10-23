@@ -10,6 +10,7 @@ import {
 } from '../src/games/contracts';
 import { intersectTarget, type TargetPose } from '../src/games/target';
 import type { CollisionMap } from './collision';
+import { type DamageWeapon, targetDamage } from './damage';
 import type { Shot, V3 } from './types';
 
 // [stance, feet xyz, eye z, then damage/status/walls/hitgroup for chest/head/pelvis].
@@ -149,11 +150,13 @@ export function cs2Sample(
   index: number,
   pose: TargetPose,
   view: DamageView,
+  weapon: DamageWeapon,
 ): SelectedSample {
   const r = rows.subarray(index * CS2_ROW, (index + 1) * CS2_ROW);
   const fixed = aimAnchor(view.aimPoint);
   let anchor = fixed ?? 0;
-  if (fixed == null) for (let a = 1; a < 3; a++) if (r[5 + a * 4] > r[5 + anchor * 4]) anchor = a;
+  const hp = (a: number) => targetDamage(r[5 + a * 4], r[8 + a * 4], view, weapon);
+  if (fixed == null) for (let a = 1; a < 3; a++) if (hp(a) > hp(anchor)) anchor = a;
   const offset = 5 + anchor * 4;
   return {
     crouched: !!r[0],
@@ -161,23 +164,28 @@ export function cs2Sample(
     eye: [r[1], r[2], r[4]],
     aim: pose.aims[anchor],
     anchor,
-    hp: Math.max(0, r[offset]),
+    hp: hp(anchor),
     status: statuses[r[offset + 1]],
     walls: r[offset + 2],
     group: r[offset + 3],
   };
 }
-export function classifyCs2(rows: Float32Array, pose: TargetPose, view: DamageView): PointData {
+export function classifyCs2(
+  rows: Float32Array,
+  pose: TargetPose,
+  view: DamageView,
+  weapon: DamageWeapon,
+): PointData {
   const count = rows.length / CS2_ROW,
     positions = new Float32Array(count * 3),
     hp = new Float32Array(count),
     kind = new Float32Array(count);
   for (let i = 0; i < count; i++) {
-    const s = cs2Sample(rows, i, pose, view);
+    const s = cs2Sample(rows, i, pose, view, weapon);
     positions.set([s.origin[0], s.origin[1], s.origin[2] + 1], i * 3);
     hp[i] = s.hp;
     kind[i] =
-      (s.status === 'clear' ? 1 : s.status === 'estimated-penetration' ? 2 : 0) +
+      (s.hp > 0 ? (s.status === 'clear' ? 1 : s.status === 'estimated-penetration' ? 2 : 0) : 0) +
       (s.crouched ? 3 : 0);
   }
   return { positions, hp, kind };

@@ -147,7 +147,7 @@ describe('CS2 standability and bounded shared scan', () => {
     expect(result.stats.standing).toBe(13);
     expect(result.stats.crouching).toBe(13);
     expect(result.rows.length).toBe(26 * CS2_ROW);
-    const data = classifyCs2(result.rows, pose(undefined, [0, 0, 64]), view);
+    const data = classifyCs2(result.rows, pose(undefined, [0, 0, 64]), view, map.metadata.weapon);
     expect(Array.from(data.kind).filter((k) => k === 1)).toHaveLength(12); // coincident eye/point is excluded
     expect(Array.from(data.kind).filter((k) => k === 4)).toHaveLength(13);
     const cancelled = await scanMap(
@@ -167,6 +167,6 @@ describe('CS2 standability and bounded shared scan', () => {
     expect(CS2.weapons).toEqual(['awp']);
     expect(GOLDSRC.weapons.length).toBeGreaterThan(1);
     expect(GOLDSRC.features.armor).toBe(true);
-    expect(CS2.features.armor).toBe(false);
+    expect(CS2.features.armor).toBe(true);
   });
 });

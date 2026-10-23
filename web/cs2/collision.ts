@@ -8,6 +8,7 @@ import {
   Vector3,
 } from 'three';
 import { CENTER, MeshBVH, type SerializedBVH } from 'three-mesh-bvh';
+import { penetrationLoss, penetrationParameters } from './damage';
 import { EPS, type MapData, type Metadata, required, type Shot, type Span, type V3 } from './types';
 
 export interface Crossing {
@@ -166,46 +167,73 @@ export function unionSpans(spans: Span[], metadata: Metadata): Span[] {
   return result;
 }
 
-// Deliberately small, explicit surrogate, NOT Valve's post-2025 penetration simulation.
-// 24*weapon penetration units of effective thickness; distanceModifier scales thickness.
-// damageModifier is treated as retained energy per contiguous obstacle. No armor/hitgroup.
+// Static collision intervals -> residual energy. Target hitgroup/armor is a separate stage.
 export function estimate(
   spans: Span[],
   distance: number,
   meta: Metadata,
   issues: string[],
-): Pick<Shot, 'damage' | 'status'> {
-  if (issues.length) return { damage: null, status: 'indeterminate' };
-  if (distance > meta.weapon.range) return { damage: 0, status: 'blocked' };
-  let damage = meta.weapon.damage * meta.weapon.rangeModifier ** (distance / 500);
-  const budget = 24 * meta.weapon.penetration;
-  let used = 0,
-    obstacles = 0,
-    previousExit = -100;
-  for (const s of spans) {
-    if (s.startInside || s.exit >= distance - EPS) return { damage: null, status: 'indeterminate' };
-    const entry = meta.materials[s.material],
-      exit = meta.materials[s.exitMaterial];
-    if (
-      entry.name === 'blockbullets' ||
-      exit.name === 'blockbullets' ||
-      meta.shapes[s.shape].tags.includes('sky')
-    )
-      return { damage: 0, status: 'blocked' };
-    const modifier = Math.min(entry.distanceModifier ?? 0, exit.distanceModifier ?? 0);
-    const retention = Math.min(entry.damageModifier ?? -1, exit.damageModifier ?? -1);
-    if (modifier <= 0 || retention < 0) return { damage: null, status: 'indeterminate' };
-    const thickness = (s.exit - s.enter) / modifier;
-    used += thickness;
-    if (s.enter - previousExit > EPS) {
-      obstacles++;
-      damage *= retention;
+): Pick<Shot, 'damage' | 'status' | 'losses'> {
+  const losses: NonNullable<Shot['losses']> = [];
+  const unknown = () => ({ damage: null, status: 'indeterminate' as const, losses });
+  if (issues.length) return unknown();
+  if (distance > meta.weapon.range) return { damage: 0, status: 'blocked', losses };
+  let damage = meta.weapon.damage,
+    travelled = 0,
+    obstacles = 0;
+  const falloff = (to: number) => {
+    damage *= meta.weapon.rangeModifier ** ((to - travelled) / 500);
+    travelled = to;
+  };
+  for (let i = 0; i < spans.length; i++) {
+    const first = spans[i];
+    let exit = first.exit;
+    let parameters: ReturnType<typeof penetrationParameters> = null;
+    // Adjacent/overlapping pieces form one solid: charge impact once, square total thickness.
+    // Mixed internal pieces conservatively use the most resistant resolved pair.
+    for (;;) {
+      const s = spans[i],
+        entry = meta.materials[s.material],
+        out = meta.materials[s.exitMaterial];
+      if (s.startInside || s.exit >= distance - EPS) return unknown();
+      if (
+        entry.name === 'blockbullets' ||
+        out.name === 'blockbullets' ||
+        meta.shapes[s.shape].tags.includes('sky')
+      )
+        return { damage: 0, status: 'blocked', losses };
+      const p = penetrationParameters(entry, out);
+      if (!p) return unknown();
+      if (!parameters || p.modifier < parameters.modifier) parameters = p;
+      else parameters.fraction = Math.max(parameters.fraction, p.fraction);
+      exit = Math.max(exit, s.exit);
+      if (!spans[i + 1] || spans[i + 1].enter > exit + EPS) break;
+      i++;
     }
-    damage *= Math.exp(-thickness / budget);
-    previousExit = s.exit;
-    if (used > budget || obstacles > 4 || damage < 1) return { damage: 0, status: 'blocked' };
+    falloff(first.enter);
+    if (++obstacles > 4 || meta.weapon.penetration <= 0)
+      return { damage: 0, status: 'blocked', losses };
+    const loss = penetrationLoss(
+      damage,
+      exit - first.enter,
+      meta.weapon.penetration,
+      required(parameters),
+    );
+    losses.push({
+      enter: first.enter,
+      exit,
+      before: damage,
+      after: Math.max(0, damage - loss.total),
+      impact: loss.impact,
+      mass: loss.mass,
+      modifier: required(parameters).modifier,
+    });
+    damage = Math.max(0, damage - loss.total);
+    if (damage < 1) return { damage: 0, status: 'blocked', losses };
+    // Falloff for the remaining interval (including material distance) happens once.
   }
-  return { damage, status: spans.length ? 'estimated-penetration' : 'clear' };
+  falloff(distance);
+  return { damage, status: spans.length ? 'estimated-penetration' : 'clear', losses };
 }
 
 export class CollisionMap {

@@ -155,7 +155,7 @@ export const CS2: GameDefinition = {
   weapons: ['awp'],
   workers: [1],
   features: {
-    armor: false,
+    armor: true,
     pitch: false,
     blend: false,
     bookmarks: false,
@@ -169,7 +169,7 @@ export const CS2: GameDefinition = {
     minSpacing: 3,
     maxRadius: 8192,
     maxCells: 100000,
-    note: 'Standing and crouching hulls on all floors. AWP residual damage estimate; live game parity unverified.',
+    note: 'Estimated target HP: posed hitgroup + armor after quadratic wall loss. Default enemy damage scales; game parity unverified.',
   },
   target: {
     originLabel: 'Z feet origin',
@@ -178,8 +178,8 @@ export const CS2: GameDefinition = {
     crouchOriginShift: 0,
     note: 'Installed Phoenix hitboxes, rifle idle + AWP additive pose. Frozen clip frame; live aim layers/IK unverified.',
   },
-  damageLabel: 'estimated residual damage',
-  damageUnit: 'est.',
+  damageLabel: 'estimated target HP damage',
+  damageUnit: 'HP est.',
   defaultSource: [77.46, 1227.8, 156.9],
 };
 export function validateScan(settings: ScanSettings, definition: GameDefinition) {

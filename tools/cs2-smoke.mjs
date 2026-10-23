@@ -1,6 +1,9 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { CollisionMap } from '../web/cs2/collision.ts';
+import { targetDamage } from '../web/cs2/damage.ts';
 import { decodeMap } from '../web/cs2/types.ts';
+import { CS2 } from '../web/src/games/contracts.ts';
+import { intersectTarget, playerPose } from '../web/src/games/target.ts';
 
 const meta = JSON.parse(readFileSync('.local/cs2/de_inferno/map.json', 'utf8'));
 const bytes = readFileSync('.local/cs2/de_inferno/map.cs2map');
@@ -62,6 +65,47 @@ const report = {
   traceMedianMs: durations[100],
   traceP95Ms: durations[190],
   shots,
+};
+// User's exact getpos/angles. Standing eye assumed; bot placement is our default
+// frozen pose, not a measurement of the user's bot or its health/armor.
+const player = JSON.parse(readFileSync('.local/cs2/de_inferno/player.json', 'utf8'));
+if (player.steamInf !== meta.steamInf) throw Error('Prepare matching map/player versions');
+const source = [267.189392, 1604.769897, 119.359955 + 64];
+const pitch = (-4.0146 * Math.PI) / 180,
+  yaw = (51.279736 * Math.PI) / 180;
+const direction = [
+  Math.cos(pitch) * Math.cos(yaw),
+  Math.cos(pitch) * Math.sin(yaw),
+  -Math.sin(pitch),
+];
+const end = source.map((n, i) => n + direction[i] * 350);
+const pose = playerPose(player, CS2.target.defaults.p, 0, 0, 0);
+const hit = intersectTarget(source, end, pose);
+const raw = map.trace(source, hit?.point ?? end);
+report.reportedShot = {
+  source,
+  angles: [-4.0146, 51.279736, 0],
+  assumptions:
+    'Standing eye+64, default frozen target pose; actual bot armor/health/position unrecorded',
+  hit,
+  shot: raw,
+  hp:
+    hit && raw.damage != null
+      ? {
+          unarmored: targetDamage(
+            raw.damage,
+            hit.group,
+            { armor: 0, armorValue: 100, armorRatio: 1, aimPoint: 'head' },
+            meta.weapon,
+          ),
+          helmet: targetDamage(
+            raw.damage,
+            hit.group,
+            { armor: 2, armorValue: 100, armorRatio: 1, aimPoint: 'head' },
+            meta.weapon,
+          ),
+        }
+      : null,
 };
 writeFileSync('.local/cs2/smoke.json', JSON.stringify(report, null, 2));
 console.log(JSON.stringify(report));

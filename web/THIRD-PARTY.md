@@ -13,3 +13,12 @@ Weapon presets also reference the same ReGameDLL_CS tag's `regamedll/dlls/weapon
 [weapon parameter provenance](../docs/WEAPONS.md).
 
 This prototype has no connection to Valve and has no official accuracy certification.
+
+CS2 quadratic penetration math references [ExternalAutoWallCS2's math pattern](https://github.com/Read1dno/ExternalAutoWallCS2/blob/main/vischeck_module.cpp),
+MIT, Copyright (c) 2025 BLOOM; notice in public/licenses/ExternalAutoWallCS2-LICENSE.txt.
+The adaptation keeps Source units (no cm conversion in the formula), uses 0.16
+impact fraction checked against user-supplied server overlays, and applies flight
+falloff once. The reference's triangle pairing, parser, BVH and Python are not used.
+Enemy hitgroup/armor math was checked against local AWP vdata and
+[recorded-damage measurements](https://memorin.app/mechanics/bullet-damage).
+No binary analysis of Valve engine code was performed. General game parity is unverified.

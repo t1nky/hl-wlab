@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { targetDamage } from '../../cs2/damage';
 import type { WalkState } from '../../cs2/movement';
 import { loadRenderMap, type RenderMap } from '../../cs2/render-map';
 import { CS2_ROW, classifyCs2, cs2Sample, type ScanStats } from '../../cs2/scan';
@@ -193,25 +194,39 @@ export class Cs2Game implements GameAnalysis {
     };
   }
   classify(view: DamageView) {
-    return classifyCs2(this.rows, required(this.targetPose), view);
+    return classifyCs2(this.rows, required(this.targetPose), view, this.meta.weapon);
   }
   selection(index: number, view: DamageView) {
-    return cs2Sample(this.rows, index, required(this.targetPose), view);
+    return cs2Sample(this.rows, index, required(this.targetPose), view, this.meta.weapon);
   }
-  async inspect(
-    source: V3,
-    view: DamageView,
-    anchor = view.aimPoint === 'chest' ? 0 : view.aimPoint === 'pelvis' ? 2 : 1,
-  ) {
-    const aim = required(this.targetPose).aims[anchor];
-    const hit = intersectTarget(source, aim, required(this.targetPose));
-    const shot = await this.trace(source, hit?.point ?? aim);
+  async inspect(source: V3, view: DamageView, anchor?: number) {
+    const anchors =
+      anchor !== undefined
+        ? [anchor]
+        : view.aimPoint === 'best'
+          ? [0, 1, 2]
+          : [view.aimPoint === 'chest' ? 0 : view.aimPoint === 'pelvis' ? 2 : 1];
+    const results = await Promise.all(
+      anchors.map(async (a) => {
+        const aim = required(this.targetPose).aims[a];
+        const hit = intersectTarget(source, aim, required(this.targetPose));
+        const shot = await this.trace(source, hit?.point ?? aim);
+        const hp =
+          shot.damage == null || !hit
+            ? null
+            : targetDamage(shot.damage, hit.group, view, this.meta.weapon);
+        return { hit, shot, hp };
+      }),
+    );
+    const { hit, shot, hp } = results.reduce((best, r) =>
+      (r.hp ?? -1) > (best.hp ?? -1) ? r : best,
+    );
     return {
       source,
       aim: shot.target,
-      title: `AWP · ${shot.status.replaceAll('-', ' ')}`,
-      summary: `${shot.damage === null ? 'Unknown' : shot.damage.toFixed(2)} residual damage estimate · geometric hitgroup ${hit?.group ?? 'none'}`,
-      text: this.describe(shot),
+      title: `AWP · ${hp ?? 'Unknown'} HP est. · ${shot.status.replaceAll('-', ' ')}`,
+      summary: `${hp ?? 'Unknown'} estimated HP · ${shot.damage?.toFixed(2) ?? 'unknown'} residual · hitgroup ${hit?.group ?? 'none'}`,
+      text: `${hp ?? 'Unknown'} estimated target HP damage · hitgroup ${hit?.group ?? 'none'} · ${view.armor === 0 ? 'no armor' : `armor ${view.armor}/${view.armorValue}`}\n${this.describe(shot)}\nDefault enemy damage scales; no heavy armor or friendly fire.`,
       intervals: shot.spans,
     };
   }
@@ -262,7 +277,11 @@ export class Cs2Game implements GameAnalysis {
           `${material(s.material)} → ${material(s.exitMaterial)} · entry ${s.enter.toFixed(2)} / exit ${s.exit.toFixed(2)} u · ${(s.exit - s.enter).toFixed(2)} u (${((s.exit - s.enter) * 2.54).toFixed(1)} cm)${s.startInside ? ' · start inside' : ''}`,
       ),
       ...shot.issues,
-      'Simulator only; no target hitgroup or armor multiplier. Current CS2 damage parity is unverified.',
+      ...(shot.losses ?? []).map(
+        (s) =>
+          `Bullet ${s.before.toFixed(2)} → ${s.after.toFixed(2)} · impact loss ${s.impact.toFixed(2)} + thickness loss ${s.mass.toFixed(2)} · penetration modifier ${s.modifier.toFixed(3)}`,
+      ),
+      'Wall-loss estimate; broader current-game parity unverified. Residual energy is separate from target HP.',
     ].join('\n');
   }
   dispose() {

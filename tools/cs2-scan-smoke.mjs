@@ -34,12 +34,17 @@ for (const settings of [{ spacing: 64, radius: 768, workers: 1 }, CS2.scan.defau
     status: {},
     standingStatus: {},
     examples: [],
+    standingAt100HP: { direct: 0, penetrating: 0 },
   };
   for (let i = 0; i < result.rows.length / CS2_ROW; i++) {
-    const sample = cs2Sample(result.rows, i, pose, view);
+    const sample = cs2Sample(result.rows, i, pose, view, meta.weapon);
     report.status[sample.status] = (report.status[sample.status] ?? 0) + 1;
     if (!sample.crouched)
       report.standingStatus[sample.status] = (report.standingStatus[sample.status] ?? 0) + 1;
+    if (!sample.crouched && sample.hp >= 100) {
+      if (sample.status === 'clear') report.standingAt100HP.direct++;
+      if (sample.status === 'estimated-penetration') report.standingAt100HP.penetrating++;
+    }
     if (!sample.crouched && sample.status === 'clear' && report.examples.length < 3)
       report.examples.push(sample);
   }

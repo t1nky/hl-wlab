@@ -37,6 +37,8 @@ export interface Metadata {
     penetration: number;
     range: number;
     rangeModifier: number;
+    armorRatio: number;
+    headshotMultiplier: number;
   };
   materials: Surface[];
   shapes: Shape[];
@@ -82,5 +84,14 @@ export interface Shot {
   damage: number | null;
   status: 'clear' | 'estimated-penetration' | 'blocked' | 'indeterminate';
   ms: number;
+  losses?: {
+    enter: number;
+    exit: number;
+    before: number;
+    after: number;
+    impact: number;
+    mass: number;
+    modifier: number;
+  }[];
 }
 export const EPS = 0.01;
