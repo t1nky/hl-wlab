@@ -139,14 +139,18 @@ export function readBSP(buffer: ArrayBuffer, { pixels = true } = {}): BSP {
       let lightmap: Face['lightmap'];
       // GoldSrc dface_t has four style bytes followed by an RGB lighting-lump
       // offset. Extents come from the untransformed texinfo axes, at 16 texels
-      // per luxel. Scan-only readers never decode or retain lighting views.
+      // per luxel. GoldSrc stores the projected coordinate in a float before
+      // floor/ceil: e.g. 3264.000064 becomes 3264, rather than adding a luxel.
+      // Keep the original UVs for rendering/tracing; only round lighting extents.
+      // Scan-only readers never decode or retain lighting views.
       const lightOffset = i(p + 16);
       if (pixels && l[8].n && lightOffset >= 0 && !(i(ti + 36) & 1)) {
         const mins: [number, number] = [0, 1].map((axis) =>
-          Math.floor(Math.min(...uv.map((st) => st[axis])) / 16),
+          Math.floor(Math.min(...uv.map((st) => Math.fround(st[axis]))) / 16),
         ) as [number, number];
         const [width, height] = [0, 1].map(
-          (axis) => Math.ceil(Math.max(...uv.map((st) => st[axis])) / 16) - mins[axis] + 1,
+          (axis) =>
+            Math.ceil(Math.max(...uv.map((st) => Math.fround(st[axis]))) / 16) - mins[axis] + 1,
         );
         if (![width, height].every((n) => Number.isSafeInteger(n) && n > 0 && n <= 4096))
           throw Error('Invalid face lightmap extents');

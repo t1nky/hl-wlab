@@ -77,6 +77,32 @@ test('unlit and special faces keep the fallback; malformed lighting ranges fail 
   assert.doesNotThrow(() => readBSP(fixture({ offset: 1 }), { pixels: false }));
 });
 
+test('lightmap bounds round projected coordinates to float before floor/ceil at positive and negative luxel edges', () => {
+  const buffer = fixture(),
+    view = new DataView(buffer),
+    vertices = view.getInt32(4 + 3 * 8, true),
+    texinfo = view.getInt32(4 + 6 * 8, true);
+  // Stored float32 scale produces +/-16.0000004768 in JS double precision.
+  // The compiler's final float assignment gives exactly +/-16: a 2x2 map.
+  view.setFloat32(texinfo, 4 / 3, true);
+  view.setFloat32(texinfo + 12, 0, true);
+  view.setFloat32(texinfo + 20, -4 / 3, true);
+  view.setFloat32(texinfo + 28, 0, true);
+  for (let i = 0; i < 4; i++)
+    for (const axis of [0, 1]) {
+      const at = vertices + i * 12 + axis * 4;
+      if (view.getFloat32(at, true)) view.setFloat32(at, 12, true);
+    }
+  const face = readBSP(buffer).faces[0];
+  assert.ok(face.uv.some(([s, t]) => s > 16 || t < -16));
+  assert.deepEqual(face.lightmap?.mins, [0, -1]);
+  assert.equal(face.lightmap?.width, 2);
+  assert.equal(face.lightmap?.height, 2);
+  assert.equal(face.lightmap?.samples.length, 2 * 2 * 3 * 2);
+  const { lightmap: _, ...displayFace } = face;
+  assert.deepEqual(readBSP(buffer, { pixels: false }).faces[0], displayFace);
+});
+
 test('atlas keeps irradiance linear, sums styles, duplicates edge gutters and maps texel centers', () => {
   const face = readBSP(fixture()).faces[0];
   const atlas = buildLightmapAtlas([face], 16);
@@ -135,6 +161,23 @@ test('local Inferno lightmaps preserve triangle/texture batches and avoid modify
     old = buildMapMeshes(unlit);
   assert.equal(meshes.length, old.length);
   assert.ok(baked.faces.filter((f) => f.lightmap).length > 8000);
+  // Inferno packs consecutive lighting blocks without padding. A width/height
+  // rounding error can stay inside the lump while reading the next face's RGB.
+  const data = new DataView(buffer),
+    faceStart = data.getInt32(4 + 7 * 8, true),
+    lightBytes = data.getInt32(8 + 8 * 8, true);
+  const blocks = baked.faces
+    .filter((f) => f.lightmap)
+    .map((f) => ({ f, offset: data.getInt32(faceStart + f.index * 20 + 16, true) }))
+    .sort((a, b) => a.offset - b.offset);
+  for (let i = 0; i < blocks.length; i++) {
+    const { f, offset } = blocks[i];
+    assert.equal(
+      f.lightmap?.samples.length,
+      (blocks[i + 1]?.offset ?? lightBytes) - offset,
+      `Face ${f.index} lightmap must end at the next stored lighting block`,
+    );
+  }
   const atlases = new Set(meshes.map((m) => m.material.lightMap));
   assert.equal(atlases.size, 1);
   for (let i = 0; i < meshes.length; i++) {
