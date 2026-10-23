@@ -72,6 +72,7 @@ const elements = {
   xray: element('xray', HTMLInputElement),
   textures: element('textures', HTMLInputElement),
   shadows: element('shadows', HTMLInputElement),
+  performance: element('performance', HTMLInputElement),
   sky: element('sky', HTMLInputElement),
   viewport: element('viewport', HTMLElement),
   canvas: element('canvas', HTMLCanvasElement),

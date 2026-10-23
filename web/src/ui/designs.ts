@@ -144,7 +144,7 @@ export const design = {
     grid.className = 'two';
     const advancedScan = node('details');
     const workersLabel = $('workers').closest('label');
-    advancedScan.append(node('summary', '', 'Performance'));
+    advancedScan.append(node('summary', '', 'Workers'));
     if (workersLabel) advancedScan.append(workersLabel);
     scan.append(advancedScan);
 

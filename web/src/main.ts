@@ -14,6 +14,7 @@ import { $, control, type ElementID, fmt, number, preference } from './ui/dom.ts
 import { errorMessage } from './ui/errors.ts';
 import { initializeLibrary } from './ui/game-library.ts';
 import { movementKey, navigationAction, nextVisible } from './ui/navigation.ts';
+import { createPerformanceHUD } from './ui/performance.ts';
 import { loadPrefs, PREFS, savePrefs } from './ui/preferences.ts';
 import { scanFraction } from './ui/scan-progress.ts';
 import { initializeSelectors, syncSelectors } from './ui/select.ts';
@@ -85,6 +86,8 @@ renderer.outputColorSpace = THREE.SRGBColorSpace;
 const scene = new THREE.Scene(),
   camera = new THREE.PerspectiveCamera(70, 1, 1, 40000),
   orbit = new OrbitControls(camera, canvas);
+const performanceHUD = createPerformanceHUD(renderer, scene, $('viewport'));
+import.meta.hot?.dispose(() => performanceHUD.dispose());
 const glContext = renderer.getContext();
 const gpuInfo = glContext.getExtension('WEBGL_debug_renderer_info');
 const softwareGPU =
@@ -633,6 +636,7 @@ async function restoreBookmark(assets: Assets, state: BookmarkState) {
       if (el instanceof HTMLInputElement && el.type === 'checkbox') el.checked = !!value;
       else el.value = String(value);
     }
+    performanceHUD.setEnabled($('performance').checked);
     // Old bookmarks used the strongest of all three cached anchors.
     $('aimPoint').value = state.aimPoint ?? 'best';
     pointMaterial.depthTest = !$('xray').checked;
@@ -1149,7 +1153,7 @@ async function switchGame(next: string) {
     syncArmor();
     library.setPrepared({
       name: 'de_inferno',
-      note: 'Prepared local CS2 map. Update with bun run cs2:prepare --render and bun run cs2:prepare:player.',
+      note: 'CS2 preview: de_inferno only. Other maps are not supported yet.',
     });
     try {
       const { Cs2Game } = await import('./games/cs2');
@@ -1172,8 +1176,7 @@ async function switchGame(next: string) {
       camera.lookAt(new THREE.Vector3(...game.target));
       orbit.target.fromArray(game.target);
       orbit.update();
-      $('assetsStatus').textContent =
-        `CS2 · ${game.meta.map} · ${game.meta.triangleCount.toLocaleString()} physics triangles · ${(game.timing?.loadMs ?? 0).toFixed(0)} ms collision load`;
+      $('assetsStatus').textContent = `CS2 · ${game.meta.map}`;
       $('progressText').textContent = game.definition.scan.note;
       design.map(`CS2 / ${game.meta.map}`);
       window.labReady = true;
@@ -1404,6 +1407,10 @@ $('textures').onchange = () => {
   schedule();
 };
 $('shadows').onchange = showShadows;
+$('performance').onchange = () => {
+  performanceHUD.setEnabled($('performance').checked);
+  if ($('performance').checked) schedule();
+};
 for (const id of ['orbit', 'walk', 'fly'] as const) $(id).onclick = () => setMode(id);
 $('overview').onclick = () => {
   if (cs2) {
@@ -1711,8 +1718,13 @@ let renderCpuMs = 0;
 // Explicit render hook for local performance checks; normal UI remains demand driven.
 function renderFrame() {
   const start = performance.now();
-  renderer.render(scene, camera);
-  renderCpuMs = performance.now() - start;
+  performanceHUD.beginFrame(start);
+  try {
+    renderer.render(scene, camera);
+  } finally {
+    renderCpuMs = performance.now() - start;
+    performanceHUD.endFrame(renderCpuMs);
+  }
 }
 window.labDebug = {
   get render() {
@@ -1802,6 +1814,7 @@ window.lab = {
 };
 initializeWeapons();
 loadPrefs();
+performanceHUD.setEnabled($('performance').checked);
 gameUI(GOLDSRC);
 showSky();
 syncArmor();

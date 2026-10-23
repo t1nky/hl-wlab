@@ -2,7 +2,7 @@
 
 [Source & licenses](source.html) · [Back to the app](./)
 
-Choose **Half-Life folder**, select Half-Life (containing cstrike and valve),
+For CS1.6, open **Maps**, choose **Half-Life folder**, select Half-Life (containing cstrike and valve),
 then choose an imported map and **Load map**. Selecting cstrike alone also works,
 but shared base-game resources may be missing. The app finds maps, a player
 model, materials, required WAD textures and skyboxes and copies them into local
@@ -13,6 +13,8 @@ files; identical files are reused. Files inside PAK archives are not extracted.
 All browsers use one folder-upload flow (`webkitdirectory`). OPFS storage
 requires HTTPS or localhost. Safari is secondary.
 Individual-file import is still available under **Import / export files**.
+The local CS2 preview currently supports only the prepared **de_inferno** package;
+its other-map selection and game-folder import are not implemented yet.
 Choose Walk, click the map, move with WASD, look in the desired direction and press E to place
 the target. Set stance and armor in **Target**; choose the weapon and spacing in **Scan**.
 The scan button stays at the bottom of the card, with result filters stacked below it.
@@ -39,6 +41,14 @@ Click a result to inspect damage or stand at that position.
 
 View → Keyboard & mouse lists these bindings. Empty filters
 offer Reset filters. Enter in a bookmark name saves it.
+
+**View → Performance** toggles a bottom-right overlay and saves the preference.
+FPS counts rendered frames; **Idle** means the static map is sleeping. CPU and GPU
+are frame times in milliseconds, not system utilization. Idle views retain the last
+frame timings. GPU time requires the browser's WebGL timer extension. RAM is the
+JavaScript heap only where exposed; VRAM is an estimate of loaded scene geometry
+and textures, excluding framebuffers and driver overhead. Unavailable readings show —.
+The overlay polls twice per second without adding a continuous render loop.
 
 Selectors support arrow keys, Enter to choose and Escape to cancel. Long lists
 include search; typing also opens a selector. Tab accepts the highlighted option

@@ -1,0 +1,29 @@
+.performance-hud {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: auto minmax(68px, 1fr);
+  gap: 3px 18px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #ffffff12;
+  border-radius: 8px;
+  background: #191a20ed;
+  color: #e4e4e8;
+  font-size: 11px;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+.performance-hud[hidden] {
+  display: none;
+}
+.performance-hud dt {
+  color: #a5a5af;
+}
+.performance-hud dd {
+  margin: 0;
+  text-align: right;
+}

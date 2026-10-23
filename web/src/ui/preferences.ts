@@ -12,6 +12,7 @@ export const PREFS = [
   'xray',
   'textures',
   'shadows',
+  'performance',
   'sky',
   'workers',
 ] as const;

@@ -23,6 +23,13 @@ export function initializeLibrary(load: (library: LibraryMapRef) => Promise<void
     if (!working && !sceneBusy) $('gameDirectory').click();
   };
   function sync() {
+    // The CS2 prototype has one prepared map, not a Half-Life folder library.
+    $('gameFolder').hidden = !!prepared;
+    $('libraryLoad').hidden = !!prepared;
+    const picker = $('libraryMap').closest('label');
+    if (picker) picker.hidden = !!prepared;
+    const files = $('mapFile').closest('details');
+    if (files) files.hidden = !!prepared;
     $('gameFolder').disabled = working || sceneBusy || !!prepared;
     $('libraryMap').disabled = working || sceneBusy || !!prepared || !catalog?.maps.length;
     $('libraryLoad').disabled = working || sceneBusy || !!prepared || !$('libraryMap').value;
