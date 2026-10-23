@@ -11,6 +11,7 @@ import {
   type WebGLProgramParametersWithUniforms,
   type WebGLRenderer,
 } from 'three';
+import type { IrradianceLighting } from './render-irradiance';
 
 export interface SunMetadata {
   schema: number;
@@ -38,6 +39,7 @@ export interface SunLighting {
   texture: Texture;
   scale: Vector2;
   enabled: { value: number };
+  irradiance?: IrradianceLighting;
   status?: 'pending' | 'active' | 'unsupported';
 }
 

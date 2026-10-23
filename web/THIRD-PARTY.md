@@ -14,6 +14,12 @@ Weapon presets also reference the same ReGameDLL_CS tag's `regamedll/dlls/weapon
 
 This prototype has no connection to Valve and has no official accuracy certification.
 
+CS2 environment color-correction matrices, masked model-tint interpretation and
+lighting-format handling reference MIT-licensed
+[ValveResourceFormat](https://github.com/ValveResourceFormat/ValveResourceFormat).
+The local importer pins version 20.1.7467. Its full notice is retained in
+[VRF-LICENSE.txt](public/licenses/VRF-LICENSE.txt). Original game assets are never bundled.
+
 CS2 quadratic penetration math references [ExternalAutoWallCS2's math pattern](https://github.com/Read1dno/ExternalAutoWallCS2/blob/main/vischeck_module.cpp),
 MIT, Copyright (c) 2025 BLOOM; notice in public/licenses/ExternalAutoWallCS2-LICENSE.txt.
 The adaptation keeps Source units (no cm conversion in the formula), uses 0.16

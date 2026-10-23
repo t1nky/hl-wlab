@@ -18,6 +18,8 @@ import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.j
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { type batchStaticMap, batchStaticMapAsync } from './render-batches';
 import { decodeRenderViews, type RenderDecodeTimings } from './render-decode';
+import { type IrradianceMetadata, loadIrradiance } from './render-irradiance';
+import { type Cs2Mask, loadMaterialMask } from './render-masks';
 import { type Cs2Material, diffuseMaterial } from './render-materials';
 import { yieldRenderTask } from './render-schedule';
 import { hasSunBinding, loadSunVisibility, type SunLighting, type SunMetadata } from './render-sun';
@@ -44,6 +46,7 @@ export interface RenderMetadata {
   compactPrimitiveBounds?: number;
   packageHash?: string;
   sunShadows?: SunMetadata;
+  irradiance?: IrradianceMetadata;
   runtimeBounds?: {
     geometryCount: number;
     shrunkCount: number;
@@ -57,6 +60,7 @@ export interface RenderMetadata {
     totalMs: number;
     manifestMs?: number;
     sunMs?: number;
+    irradianceMs?: number;
   };
   runtimeDecode?: RenderDecodeTimings[];
 }
@@ -108,6 +112,10 @@ export function disposeRenderGroup(group: Group): void {
   const materials = new Set<Material>();
   const textures = new Set<Texture>();
   if (group.userData.cs2SunTexture instanceof Texture) textures.add(group.userData.cs2SunTexture);
+  if (group.userData.cs2IrradianceTexture instanceof Texture)
+    textures.add(group.userData.cs2IrradianceTexture);
+  for (const texture of group.userData.cs2MaskTextures ?? [])
+    if (texture instanceof Texture) textures.add(texture);
   const batches = new Set<BatchedMesh>();
   group.traverse((object) => {
     if (!(object instanceof Mesh)) return;
@@ -119,8 +127,12 @@ export function disposeRenderGroup(group: Group): void {
         if (value instanceof Texture) textures.add(value);
       for (const value of material.userData.cs2Textures ?? [])
         if (value instanceof Texture) textures.add(value);
+      for (const value of material.userData.cs2Masks ?? [])
+        if (value instanceof Texture) textures.add(value);
       if (material.userData.cs2Sun?.texture instanceof Texture)
         textures.add(material.userData.cs2Sun.texture);
+      if (material.userData.cs2Sun?.irradiance?.texture instanceof Texture)
+        textures.add(material.userData.cs2Sun.irradiance.texture);
     }
   });
   const images = new Set<ImageBitmap>();
@@ -139,6 +151,8 @@ export function disposeRenderGroup(group: Group): void {
   group.removeFromParent();
   group.clear();
   delete group.userData.cs2SunTexture;
+  delete group.userData.cs2IrradianceTexture;
+  delete group.userData.cs2MaskTextures;
 }
 
 export async function loadRenderMap(
@@ -172,6 +186,27 @@ export async function loadRenderMap(
   group.name = 'CS2 render geometry (display only)';
   group.matrixAutoUpdate = false;
   group.matrix.copy(sourceTransform(metadata.gltfToSource));
+  let disposed = false;
+  const maskTextures = new Set<Texture>();
+  group.userData.cs2MaskTextures = maskTextures;
+  const maskRequests = new Map<string, Promise<Texture>>();
+  function maskTexture(mask: Cs2Mask): Promise<Texture> {
+    let request = maskRequests.get(mask.file);
+    if (!request) {
+      request = loadMaterialMask(mask, version, signal).then((texture) => {
+        // Other in-flight masks can finish after a sibling load has failed.
+        if (disposed) {
+          texture.dispose();
+          throw new DOMException('Map load cancelled', 'AbortError');
+        }
+        maskTextures.add(texture);
+        return texture;
+      });
+      void request.catch(() => undefined);
+      maskRequests.set(mask.file, request);
+    }
+    return request;
+  }
   const manager = new LoadingManager();
   // The manifest is always revalidated; dependent resources belong to that exact package.
   // A rebuild cannot accidentally reuse a prior chunk or ImageBitmap cache entry.
@@ -222,8 +257,20 @@ export async function loadRenderMap(
       name: 'CS2_render_layers',
       beforeRoot() {
         const indices = new Set<number>();
-        for (const material of parser.json.materials ?? [])
-          for (const layer of material.extras?.cs2?.layers ?? []) indices.add(layer.texture);
+        const materials = new Set<number>();
+        for (const mesh of parser.json.meshes ?? [])
+          for (const primitive of mesh.primitives)
+            if (Number.isInteger(primitive.material)) materials.add(primitive.material);
+        for (const index of materials) {
+          const material = parser.json.materials[index];
+          const settings = material.extras?.cs2 as Cs2Material | undefined;
+          for (const layer of settings?.layers ?? []) indices.add(layer.texture);
+          for (const layer of [
+            settings?.tint?.base,
+            ...(settings?.layers.map((l) => l.tint) ?? []),
+          ])
+            if (layer?.mask) pending.push(maskTexture(layer.mask));
+        }
         for (const index of indices) {
           const request = parser.getDependency('texture', index);
           // Attach a handler immediately; afterRoot propagates the actual error.
@@ -238,9 +285,21 @@ export async function loadRenderMap(
     };
   });
   loader.setMeshoptDecoder(MeshoptDecoder);
-  const dispose = () => disposeRenderGroup(group);
+  const dispose = () => {
+    disposed = true;
+    disposeRenderGroup(group);
+    maskTextures.clear();
+    maskRequests.clear();
+  };
   const bounds = { geometryCount: 0, shrunkCount: 0, precomputedCount: 0, ms: 0 };
-  const timings = { resourcesMs: 0, materialsMs: 0, totalMs: 0, manifestMs, sunMs: 0 };
+  const timings = {
+    resourcesMs: 0,
+    materialsMs: 0,
+    totalMs: 0,
+    manifestMs,
+    sunMs: 0,
+    irradianceMs: 0,
+  };
   const pendingMaterials = new Set<Material>();
   let sun: SunLighting | undefined;
   try {
@@ -249,6 +308,12 @@ export async function loadRenderMap(
       sun = await loadSunVisibility(metadata.sunShadows, version, signal);
       timings.sunMs = performance.now() - sunStarted;
       group.userData.cs2SunTexture = sun.texture;
+      if (metadata.irradiance) {
+        const irradianceStarted = performance.now();
+        sun.irradiance = await loadIrradiance(metadata.irradiance, version, signal);
+        timings.irradianceMs = performance.now() - irradianceStarted;
+        group.userData.cs2IrradianceTexture = sun.irradiance.texture;
+      }
     }
     for (const [index, chunk] of metadata.chunks.entries()) {
       if (!/^render\/[a-zA-Z0-9_.-]+\.gltf$/.test(chunk))
@@ -293,6 +358,14 @@ export async function loadRenderMap(
           ),
         );
         if (textures.some((texture) => !texture)) throw Error('Missing render layer texture');
+        const masks = settings?.tint
+          ? await Promise.all(
+              [settings.tint.base, ...settings.layers.map((l) => l.tint)].map((layer) => {
+                if (!layer?.mask) throw Error('Missing render layer mask');
+                return maskTexture(layer.mask);
+              }),
+            )
+          : [];
         const variants = new Map<boolean, Material>();
         for (const lit of modes.get(source) ?? []) {
           const material = diffuseMaterial(
@@ -300,6 +373,7 @@ export async function loadRenderMap(
             settings,
             textures,
             lit ? sun : undefined,
+            masks,
           );
           pendingMaterials.add(material);
           material.clippingPlanes = clippingPlanes;

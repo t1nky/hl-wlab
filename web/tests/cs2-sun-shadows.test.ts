@@ -259,6 +259,9 @@ it.skipIf(!existsSync(localManifest))(
       layered = 0;
     for (const mesh of gltf.meshes)
       for (const primitive of mesh.primitives) {
+        const sourceMaterial = gltf.materials[primitive.material];
+        expect(sourceMaterial.extras.staticSurface).not.toBe(false);
+        expect(sourceMaterial.extras.cs2.shader).not.toBe('csgo_effects.vfx');
         const binding = primitive.extras.cs2Lighting;
         if (binding.mode === 'lightmap') {
           lightmapped++;

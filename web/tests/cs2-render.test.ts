@@ -84,17 +84,29 @@ describe('CS2 render resources', () => {
 
   it('disposes shared GPU resources once and removes the rendered map', () => {
     const texture = new Texture();
+    const irradiance = new Texture();
+    const mask = new Texture();
     const material = new MeshBasicMaterial({ map: texture });
     const geometry = new BoxGeometry();
     const group = new Group();
     const scene = new Group();
     scene.add(group);
     group.add(new Mesh(geometry, material), new Mesh(geometry, material));
+    group.userData.cs2IrradianceTexture = irradiance;
+    material.userData.cs2Sun = { irradiance: { texture: irradiance } };
+    group.userData.cs2MaskTextures = new Set([mask]);
+    material.userData.cs2Masks = [mask, mask];
     const textureDispose = vi.spyOn(texture, 'dispose');
+    const irradianceDispose = vi.spyOn(irradiance, 'dispose');
+    const maskDispose = vi.spyOn(mask, 'dispose');
     const materialDispose = vi.spyOn(material, 'dispose');
     const geometryDispose = vi.spyOn(geometry, 'dispose');
     disposeRenderGroup(group);
     expect(textureDispose).toHaveBeenCalledTimes(1);
+    expect(irradianceDispose).toHaveBeenCalledTimes(1);
+    expect(maskDispose).toHaveBeenCalledTimes(1);
+    expect(group.userData.cs2IrradianceTexture).toBeUndefined();
+    expect(group.userData.cs2MaskTextures).toBeUndefined();
     expect(materialDispose).toHaveBeenCalledTimes(1);
     expect(geometryDispose).toHaveBeenCalledTimes(1);
     expect(group.parent).toBeNull();

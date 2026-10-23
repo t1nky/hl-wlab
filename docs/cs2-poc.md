@@ -44,8 +44,8 @@ sky/ground lighting with original full-resolution baked sunlight visibility.
 Native BC4 blocks add a 32 MiB GPU atlas and about 31.7 MiB of native UNORM16 UVs;
 the atlas download is about 5.25 MiB. Paired isolated warm map loading measured
 1.347 → 1.449 s, and warm render submission CPU measured 2.27 → 2.36 ms on
-SwiftShader. Total package size is 293.5 MiB. Full irradiance, local-light shadow
-channels, exposure and game display parity remain unimplemented. Older packages
+SwiftShader. That package size was 293.5 MiB. Full-resolution/directional irradiance,
+local-light shadow channels, exposure and game display parity remain unimplemented. Older packages
 or unsupported compressed-texture hardware keep the existing display lighting.
 Neither path adds full-map shadow-map or postprocessing passes.
 **View → Shadows** switches baked shading in place and remembers the preference.
@@ -57,6 +57,25 @@ and lossless texture packing. Existing packages remain readable with the bounds
 fallback. The current machine's ignored package has already been prepared.
 Main-app and standalone POC Vite caches are separate to avoid outdated optimized
 dependency errors when both previews run.
+
+The October 23 appearance correction fixes cream plaster being tinted red and
+wood shutters becoming black. Opaque environment materials retain original RGBA;
+per-layer color correction, tint enables, height-green masks and vertex paint run
+in the fragment shader. Original reflectance alpha participates in affine color
+correction, and HDR values remain unclipped until after model tint. Images stay
+shared across instance colors; masks are deduplicated lossless R8 textures.
+Unsupported atmospheric `csgo_effects` proxy polygons are omitted from the static
+analysis scene instead of appearing as opaque gray sheets. Collision is unchanged.
+
+Sun direction and color follow Inferno's actual `light_environment`. Authored
+4096-square BC6H irradiance mip 1 replaces approximate hemisphere lighting on
+lightmapped surfaces, adding **16 MiB** and one lookup without another draw pass.
+Unsupported BPTC hardware retains hemisphere lighting. The current local package
+has **8,323,129 triangles**, 6,549 primitives, 255 shared color images and 150 R8
+masks: **307.0 MiB** on disk and **386.3 MiB** estimated texture GPU storage,
+excluding batching/browser overhead. Shadows toggles both baked lighting inputs.
+Normals/specular, directional irradiance, Source tone mapping/color grading,
+atmospheric effects and skyboxes still limit visual parity.
 
 For reproducible scan comparisons, run from the repository:
 
@@ -416,8 +435,9 @@ to opaque. UV channel, scale, pivot, rotation and offset are retained. Vertex pa
 uses alpha as tint strength; environment color layers blend using TEXCOORD4 weights.
 Foliage COLOR channels encode wind rather than paint and are excluded. Other
 materials use vertex colors only when their shader enables that feature.
-Height-based blending, layer color-correction/tint masks, normal/roughness maps,
-baked lighting and skyboxes are omitted. This remains an approximation of Source
+Height-based blending, normal/roughness maps and skyboxes are omitted. Environment
+layer color correction and tint masks, baked sun visibility and diffuse irradiance
+are supported as described above. This remains an approximation of Source
 shaders. A texture being present does not establish shader parity.
 Meshoptimizer 1.3.0 compresses geometry losslessly; every buffer view is decoded
 and compared byte-for-byte through Three's bundled decoder before publishing the
@@ -432,10 +452,10 @@ redraw. There is no portal/occlusion culling or distance-based mesh LOD yet.
 
 The VRF glTF exporter emits all aggregate detail variants; preparation filters to
 the lowest present LOD mask bit, matching VRF's renderer, and excludes tools-only
-materials. Filtering happens after transforms have been consumed, preventing
+materials and unsupported atmospheric-effect proxies. Filtering happens after transforms have been consumed, preventing
 transform-index shifts when a fragment is omitted. These are render-only changes.
 
-After the rendering fixes, Inferno contains **8,323,289 render triangles** in
+Before the October 23 appearance update, Inferno contained **8,323,289 render triangles** in
 6,559 primitives, with 255 unique color textures. Preparation excludes 51 redundant
 aggregate LOD meshes and tools-only primitives. The package is **290.8 MiB**;
 decoded geometry is 410.0 MiB, and estimated texture GPU storage is 304.3 MiB, in

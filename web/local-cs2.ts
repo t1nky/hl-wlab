@@ -23,7 +23,8 @@ export function localCs2(packageRoot = local): Plugin {
           res.end();
           return;
         }
-        const isRender = /^render\/[a-zA-Z0-9_.-]+\.(gltf|bin|png|webp|bc4\.gz)$/.test(name);
+        const isRender =
+          /^render\/[a-zA-Z0-9_.-]+\.(gltf|bin|png|webp|bc4\.gz|bc6h\.gz|r8\.gz)$/.test(name);
         const file = resolve(packageRoot, name);
         if (
           (name !== 'map.json' &&

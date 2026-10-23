@@ -14,6 +14,9 @@ test('private CS2 route serves WebP and PNG, revalidates, and restricts asset pa
   const webp = new Uint8Array([82, 73, 70, 70, 4, 0, 0, 0, 87, 69, 66, 80]);
   await writeFile(join(assets, 'render/fixture.webp'), webp);
   await writeFile(join(assets, 'render/alpha.png'), 'png fixture');
+  await writeFile(join(assets, 'render/sun.bc4.gz'), 'sun fixture');
+  await writeFile(join(assets, 'render/irradiance.bc6h.gz'), 'irradiance fixture');
+  await writeFile(join(assets, 'render/mask.r8.gz'), 'mask fixture');
   await writeFile(join(assets, 'render/not-allowed.txt'), 'private');
   await writeFile(join(folder, 'outside.webp'), 'must stay outside');
   const server = await createServer({
@@ -49,9 +52,18 @@ test('private CS2 route serves WebP and PNG, revalidates, and restricts asset pa
     assert.equal(png.status, 200);
     assert.equal(png.headers.get('content-type'), 'image/png');
     assert.equal(await png.text(), 'png fixture');
+    for (const atlas of ['sun.bc4.gz', 'irradiance.bc6h.gz', 'mask.r8.gz']) {
+      const response = await fetch(`${base}/local/render/${atlas}`);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('content-type'), 'application/octet-stream');
+    }
     for (const path of [
       'render/not-allowed.txt',
       'render/fixture.webp.js',
+      'render/irradiance.bc6h.gz.js',
+      'render/irradiance.bc6h',
+      'render/mask.r8',
+      'render/mask.r8.gz.js',
       'render/missing.webp',
       'render/%2e%2e%2f%2e%2e%2foutside.webp',
       'render/%2e%2e%5c%2e%2e%5coutside.webp',

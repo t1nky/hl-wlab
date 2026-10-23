@@ -11,9 +11,13 @@ import {
   MeshLambertMaterial,
   MeshStandardMaterial,
   Quaternion,
+  ShaderLib,
   Texture,
   Vector2,
   Vector3,
+  Vector4,
+  type WebGLProgramParametersWithUniforms,
+  type WebGLRenderer,
 } from 'three';
 import { describe, expect, it, vi } from 'vitest';
 import { compactPrimitive, restoreOverlayPositions } from '../../tools/cs2-render-pack.mjs';
@@ -37,6 +41,73 @@ const settings: Cs2Material = {
 };
 
 describe('CS2 render optimization correctness', () => {
+  it('keeps object tint separate from paint and uses shared R8 masks with source-alpha affine correction', () => {
+    const correction = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0.6, 0.55, 0.44, 1];
+    const tint = {
+      enabled: false,
+      contrast: 0.7,
+      brightness: 1.2,
+      vertexColorMode: 0,
+      correction,
+      tintedCorrection: correction,
+      unmaskedCorrection: true,
+    };
+    const environment: Cs2Material = {
+      ...settings,
+      shader: 'csgo_environment_blend.vfx',
+      blendMode: 0,
+      tint: { amount: 1, material: [1, 1, 1], base: tint },
+      layers: [{ texture: 0, uv: identityUv, tint: { ...tint, enabled: true } }],
+    };
+    const source = new MeshStandardMaterial({
+      map: new Texture(),
+      color: 0x9a3030,
+      vertexColors: true,
+    });
+    source.userData.cs2 = environment;
+    const masks = [new Texture(), new Texture()];
+    const material = diffuseMaterial(source, environment, [new Texture()], undefined, masks);
+    const shader = {
+      vertexShader: ShaderLib.lambert.vertexShader,
+      fragmentShader: ShaderLib.lambert.fragmentShader,
+      uniforms: {} as Record<string, { value: unknown }>,
+    } as WebGLProgramParametersWithUniforms;
+    material.onBeforeCompile(shader, {} as WebGLRenderer);
+    expect(shader.uniforms.cs2BaseTint.value).toMatchObject({ z: 0 });
+    expect(shader.uniforms.cs2LayerTint0.value).toMatchObject({ z: 1 });
+    expect(shader.vertexShader).toContain('vCs2ModelTint = batchingColor.xyz');
+    expect(shader.vertexShader).not.toContain('vColor.xyz *= batchingColor.xyz');
+    expect(shader.fragmentShader).toContain('diffuse * vCs2ModelTint, cs2Paint');
+    expect(shader.fragmentShader).not.toContain('#include <color_fragment>');
+    expect(shader.fragmentShader).toContain('vec4(1.0, 1.0, 1.0, opacity)');
+    expect(Object.keys(shader.uniforms).filter((k) => /^cs2Mask/.test(k))).toEqual([
+      'cs2Mask0',
+      'cs2Mask1',
+    ]);
+    const affine = shader.uniforms.cs2BaseTintCorrection.value as Matrix4;
+    const sample = new Vector4(0.25, 0.18, 0.1, 0.25).applyMatrix4(affine);
+    expect(sample.toArray()).toEqual([0.4, 0.3175, 0.21000000000000002, 0.25]);
+    expect(shader.fragmentShader).toContain('(correction * texel).rgb');
+    expect(shader.fragmentShader).toContain('texture2D(cs2Mask0, vMapUv).r');
+    const group = new Group();
+    const other = diffuseMaterial(
+      new MeshStandardMaterial({ map: source.map, color: 0x224466 }),
+      environment,
+      material.userData.cs2Textures,
+      undefined,
+      masks,
+    );
+    other.userData.cs2 = environment;
+    group.add(new Mesh(new BoxGeometry(), material), new Mesh(new BoxGeometry(), other));
+    expect(batchStaticMap(group).batches).toBe(1);
+    const batch = group.children[0] as BatchedMesh;
+    const color = new Color();
+    batch.getColorAt(0, color);
+    expect(color.getHex()).toBe(0x9a3030);
+    batch.getColorAt(1, color);
+    expect(color.getHex()).toBe(0x224466);
+    disposeRenderGroup(group);
+  });
   it('undoes the pinned exporter overlay lift in local metres before rotated/scaled placement', () => {
     const original = new Float32Array([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     const normals = new Float32Array([0, 1, 0, 0.6, 0.8, 0, -1, 0, 0]);
@@ -263,6 +334,38 @@ it.skipIf(!existsSync(path))(
   },
 );
 it.skipIf(!existsSync(path))(
+  'actual Inferno cream plaster and street shutters respect source per-layer tint controls',
+  () => {
+    const gltf = JSON.parse(readFileSync(path, 'utf8'));
+    const plaster = gltf.materials.filter((m: { extras: { sourceMaterial: string } }) =>
+      m.extras.sourceMaterial.endsWith('/inferno_plaster_facade_01_basic_notint.vmat_c'),
+    );
+    expect(plaster.length).toBeGreaterThan(1);
+    for (const material of plaster) {
+      expect(material.extras.cs2.tint.base.enabled).toBe(false);
+      expect(material.extras.cs2.layers[0].tint.enabled).toBe(false);
+    }
+    const shutters = gltf.materials.filter((m: { extras: { sourceMaterial: string } }) =>
+      m.extras.sourceMaterial.endsWith('/bk01_trim_wood01b.vmat_c'),
+    );
+    expect(shutters.length).toBeGreaterThan(1);
+    for (const material of shutters) {
+      expect(material.extras.cs2.tint.base.enabled).toBe(true);
+      expect(material.extras.cs2.layers[0].tint.enabled).toBe(false);
+    }
+    // Every object-color variant shares corrected RGB/masks; colors stay in the batch stream.
+    for (const materials of [plaster, shutters]) {
+      const images = new Set(
+        materials.map(
+          (m: { pbrMetallicRoughness: { baseColorTexture: { index: number } } }) =>
+            gltf.images[gltf.textures[m.pbrMetallicRoughness.baseColorTexture.index].source].uri,
+        ),
+      );
+      expect(images.size).toBe(1);
+    }
+  },
+);
+it.skipIf(!existsSync(path))(
   'actual Inferno barrel-side plywood uses masked tint instead of a uniform black multiplier',
   () => {
     const gltf = JSON.parse(readFileSync(path, 'utf8'));
@@ -275,16 +378,20 @@ it.skipIf(!existsSync(path))(
     expect(material.extras.sourceMaterial).toBe(
       'materials/de_inferno/trim/inferno_trim_plywood01_plywood02_blend.vmat_c',
     );
-    expect(material.extras.cs2.modelTintBaked).toBe(true);
-    expect(material.pbrMetallicRoughness.baseColorFactor).toEqual([1, 1, 1, 1]);
+    expect(material.extras.cs2.tint).toBeDefined();
+    expect(material.pbrMetallicRoughness.baseColorFactor).toEqual([0, 0, 0, 1]);
     expect(material.extras.cs2.layers).toHaveLength(1);
     const plain = gltf.materials.find(
-      (m: { name: string; extras: { cs2: Cs2Material } }) =>
-        m.name === material.name && !m.extras.cs2.modelTintBaked,
+      (m: {
+        name: string;
+        extras: { cs2: Cs2Material };
+        pbrMetallicRoughness: { baseColorFactor?: number[] };
+      }) => m.name === material.name && m.pbrMetallicRoughness.baseColorFactor?.[0] !== 0,
     );
     const textureFile = (m: typeof material) =>
       gltf.images[gltf.textures[m.pbrMetallicRoughness.baseColorTexture.index].source].uri;
-    expect(textureFile(material)).not.toBe(textureFile(plain));
+    expect(plain).toBeDefined();
+    expect(textureFile(material)).toBe(textureFile(plain));
     const metadata = JSON.parse(
       readFileSync(
         fileURLToPath(new URL('../../.local/cs2/de_inferno/render.json', import.meta.url)),
@@ -293,7 +400,11 @@ it.skipIf(!existsSync(path))(
     );
     // Keep ordinary colors as batched instance tints, rather than baking hundreds of variants.
     expect(metadata.maskedTintMaterials).toBeGreaterThan(0);
-    expect(metadata.estimatedTextureGpuBytes).toBeLessThan(350 * 1048576);
+    // 32 MiB BC4 sunlight + 16 MiB BC6H irradiance + exact single-channel masks.
+    // Original RGBA stays shared across correction and object-color variants.
+    expect(metadata.maskTextureCount).toBeGreaterThan(0);
+    expect(metadata.maskTextureGpuBytes).toBeLessThan(40 * 1048576);
+    expect(metadata.estimatedTextureGpuBytes).toBeLessThan(400 * 1048576);
   },
 );
 it.skipIf(!existsSync(path))(

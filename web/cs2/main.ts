@@ -1,10 +1,8 @@
 import {
-  AmbientLight,
   BatchedMesh,
   BufferAttribute,
   BufferGeometry,
   Color,
-  DirectionalLight,
   DoubleSide,
   Fog,
   Group,
@@ -26,6 +24,7 @@ import {
   WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { CS2_BACKGROUND, cs2Lighting } from '../src/render/lighting';
 import { loadRenderMap, type RenderMap } from './render-map';
 import { decodeMap, type MapData, type Metadata, required, type Shot, type V3 } from './types';
 import { createWalkControls, type WalkState } from './walk-controls';
@@ -48,7 +47,7 @@ const software = /swiftshader|llvmpipe|software/i.test(gpu);
 renderer.localClippingEnabled = true;
 view.append(renderer.domElement);
 const scene = new Scene();
-scene.background = new Color('#15232c');
+scene.background = new Color(CS2_BACKGROUND);
 scene.fog = new Fog(scene.background, 30000, 40000);
 const camera = new PerspectiveCamera(55, 1, 1, 40000);
 camera.up.set(0, 0, 1);
@@ -56,10 +55,7 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.maxDistance = 20000;
 controls.minDistance = 10;
-scene.add(new AmbientLight(0xffffff, 1.6));
-const sun = new DirectionalLight(0xffffff, 2);
-sun.position.set(-1000, -1000, 4000);
-scene.add(sun);
+scene.add(...cs2Lighting());
 const ceiling = new Plane(new Vector3(0, 0, -1), 40000);
 let dirty = true;
 let renderMs = 0;

@@ -55,13 +55,20 @@ test('walking physical pixels stay within budget at 4K/HiDPI without changing or
   assert.equal(viewPixelRatio(1280, 800, 2, true, true, false), 0.75);
 });
 
-test('display lighting uses a Z-up hemisphere with warmer sun and adds no shadow passes', () => {
+test('display lighting follows Inferno sunlight in Z-up space without extra shadow passes', () => {
   const [sky, sun] = cs2Lighting();
   assert.ok(sky instanceof THREE.HemisphereLight);
   assert.deepEqual(sky.position.toArray(), [0, 0, 1]);
   assert.notDeepEqual(sky.color, sky.groundColor);
   assert.ok(sun instanceof THREE.DirectionalLight);
   assert.equal(sun.castShadow, false);
+  const direction = sun.position.clone().normalize();
+  const pitch = (63 * Math.PI) / 180;
+  const yaw = (218 * Math.PI) / 180;
+  assert.ok(Math.abs(direction.x + Math.cos(pitch) * Math.cos(yaw)) < 1e-7);
+  assert.ok(Math.abs(direction.y + Math.cos(pitch) * Math.sin(yaw)) < 1e-7);
+  assert.ok(Math.abs(direction.z - Math.sin(pitch)) < 1e-7);
+  assert.equal(sun.color.getHex(), 0xfff7eb);
 });
 
 test('mode-switch disposal frees nested/shared lightmap and hidden albedo once', () => {

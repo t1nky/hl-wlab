@@ -4,6 +4,7 @@ using System.Numerics;
 // Pure math shared with importer tests. This is appearance only, never collision/material IDs.
 internal static class RenderTint
 {
+    private static readonly Vector3 Luminance = Vector3.Normalize(new Vector3(0.2126f, 0.7152f, 0.0722f));
     public static float Linear(float srgb) => srgb <= 0.04045f ? srgb / 12.92f : MathF.Pow((srgb + 0.055f) / 1.055f, 2.4f);
     public static float Srgb(float linear) => linear <= 0.0031308f ? linear * 12.92f : 1.055f * MathF.Pow(linear, 1f / 2.4f) - 0.055f;
     public static Vector3 Linear(Vector3 value) => new(Linear(value.X), Linear(value.Y), Linear(value.Z));
@@ -18,6 +19,43 @@ internal static class RenderTint
     }
     public static float Mask(float green, float contrast, float brightness) =>
         Math.Clamp(((green - 0.5f) * contrast + 0.5f) * brightness, 0, 1);
+
+    // Row-vector versions of VRF's MIT-licensed VfxEvalFunctions color matrices.
+    // These are material parameters, so corrected RGB is shared by every instance tint.
+    private static Matrix4x4 LumaRotation()
+    {
+        var cross = Vector3.Cross(Luminance, Vector3.UnitZ);
+        return Matrix4x4.CreateFromAxisAngle(Vector3.Normalize(cross), MathF.Atan2(cross.Length(), Vector3.Dot(Luminance, Vector3.UnitZ)));
+    }
+    public static Matrix4x4 ColorCorrection(Vector3 csb, Vector3 average)
+    {
+        var rotation = LumaRotation();
+        return Matrix4x4.CreateTranslation(-average) * Matrix4x4.CreateScale(csb.X) * Matrix4x4.CreateTranslation(average) *
+            Matrix4x4.CreateScale(csb.Z) * Matrix4x4.CreateScale(Luminance) * rotation *
+            Matrix4x4.CreateScale(csb.Y, csb.Y, 1) * Matrix4x4.Transpose(rotation) * Matrix4x4.CreateScale(Vector3.One / Luminance);
+    }
+    public static Matrix4x4 ColorTint(Vector3 tint)
+    {
+        var high = Math.Max(tint.X, Math.Max(tint.Y, tint.Z));
+        var low = Math.Min(tint.X, Math.Min(tint.Y, tint.Z));
+        var saturation = high == 0 ? 0 : (high - low) / high;
+        var rotation = LumaRotation();
+        var scale = Matrix4x4.CreateScale(Luminance);
+        var gray = Vector3.Transform(tint, scale * rotation);
+        var satFactor = 1 - saturation * saturation;
+        return scale * rotation * Matrix4x4.CreateTranslation(-gray.X, -gray.Y, 0) *
+            Matrix4x4.CreateScale(1 - saturation, 1 - saturation, satFactor) *
+            Matrix4x4.CreateTranslation(gray.X, gray.Y, (1 - satFactor) * gray.Z) *
+            Matrix4x4.Transpose(rotation) * Matrix4x4.CreateScale(Vector3.One / Luminance);
+    }
+    public static Vector3 Correct(Vector3 color, Matrix4x4 correction, Matrix4x4 tint, bool unmaskedCorrection, float mask, float alpha = 1)
+    {
+        var sample = new Vector4(color, alpha);
+        var corrected = Vector4.Transform(sample, correction);
+        var tinted = Vector4.Transform(sample, correction * tint);
+        return Vector3.Lerp(unmaskedCorrection ? new Vector3(corrected.X, corrected.Y, corrected.Z) : color,
+            new Vector3(tinted.X, tinted.Y, tinted.Z), mask);
+    }
     public static Vector3 Apply(Vector3 color, Vector3 tint, float amount, float mask)
     {
         var norm = Vector3.Normalize(Vector3.Max(tint, new Vector3(0.001f)));
