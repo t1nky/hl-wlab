@@ -6,6 +6,13 @@ remains unchanged; no merge or deployment is performed.
 
 ## Frame pacing and first-view stalls
 
+Navigation uses **C** for held crouch or Fly descent and **V** to toggle crouch
+in the shared app. Ctrl is not a movement binding: Chrome's Ctrl+W closes its
+tab, and Ctrl+Shift+W closes its window. Descending while flying forward with
+the former Ctrl binding could therefore resemble a silent crash. Form and
+browser shortcuts retain their normal behavior; the app does not request
+fullscreen or keyboard locking to capture browser commands.
+
 The October 23 pass was measured on the local Ryzen 7 9800X3D / RTX 5070 Ti,
 using Chrome's D3D11 renderer and a 180 Hz display. At a 2560×1440 render size,
 the first fast-turn/flight route around Dust2 CT spawn had a **72.19 ms** frame
@@ -468,7 +475,7 @@ surface to show its Source coordinates and source material. This diagnostic pick
 render geometry, ignoring texture alpha; it does not change physics selection.
 
 Choose **Walk**, then click the map to capture the mouse. WASD moves, Space jumps,
-Ctrl/C holds crouch, E places a stationary target point at the current eye, and
+C holds crouch, E places a stationary target point at the current eye, and
 Escape pauses. Move away and click **Trace from view** to shoot from the new eye
 position toward that target. **Orbit**, **Frame shot**, picking a floor, or starting
 a scan exits walking. Walking can start near the source when the full player

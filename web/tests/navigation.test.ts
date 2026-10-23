@@ -3,7 +3,7 @@ import { test } from 'vitest';
 import { movementKey, navigationAction, nextVisible } from '../src/ui/navigation.ts';
 
 test('editing controls and paused navigation cannot move or place a target', () => {
-  for (const code of ['KeyW', 'KeyE', 'KeyC', 'Space', 'ControlLeft']) {
+  for (const code of ['KeyW', 'KeyE', 'KeyC', 'KeyV', 'Space', 'ControlLeft']) {
     assert.equal(navigationAction(code, { mode: 'walk', focused: false, active: true }), null);
     assert.equal(navigationAction(code, { mode: 'walk', focused: true, active: false }), null);
   }
@@ -13,24 +13,39 @@ test('editing controls and paused navigation cannot move or place a target', () 
 test('E and crouch toggle are deliberate, walk-only actions; holding E does not replace repeatedly', () => {
   const context = { mode: 'walk' as const, focused: true, active: true };
   assert.equal(navigationAction('KeyE', context), 'place');
-  assert.equal(navigationAction('KeyE', { ...context, ctrlKey: true }), 'place');
+  assert.equal(navigationAction('KeyE', { ...context, ctrlKey: true }), null);
   assert.equal(navigationAction('KeyE', { ...context, repeat: true }), null);
-  assert.equal(navigationAction('KeyC', context), 'crouch');
-  assert.equal(navigationAction('KeyC', { ...context, repeat: true }), null);
-  assert.equal(navigationAction('KeyC', { ...context, ctrlKey: true }), null);
+  assert.equal(navigationAction('KeyV', context), 'crouch');
+  assert.equal(navigationAction('KeyV', { ...context, repeat: true }), null);
+  assert.equal(navigationAction('KeyV', { ...context, ctrlKey: true }), null);
   assert.equal(navigationAction('KeyE', { ...context, mode: 'fly' }), null);
 });
 
-test('both modifier sides work and held crouch still permits WASD; OS shortcuts are not movement', () => {
+test('C holds crouch or descends; browser modifier shortcuts are not movement', () => {
   const context = { mode: 'walk' as const, focused: true, active: true };
   assert.equal(movementKey('ControlRight'), 'ControlLeft');
   assert.equal(movementKey('ShiftRight'), 'ShiftLeft');
-  assert.equal(navigationAction('ControlRight', context), 'move');
-  assert.equal(navigationAction('KeyW', { ...context, ctrlKey: true }), 'move');
+  assert.equal(navigationAction('ControlRight', context), null);
+  assert.equal(navigationAction('KeyC', context), 'move');
+  assert.equal(navigationAction('KeyC', { ...context, mode: 'fly' }), 'move');
+  assert.equal(navigationAction('KeyC', { ...context, repeat: true }), 'move');
+  assert.equal(navigationAction('KeyW', context), 'move');
+  assert.equal(navigationAction('KeyW', { ...context, ctrlKey: true }), null);
   assert.equal(navigationAction('KeyW', { ...context, metaKey: true }), null);
   assert.equal(navigationAction('KeyW', { ...context, altKey: true }), null);
   assert.equal(navigationAction('ShiftRight', context), null);
   assert.equal(navigationAction('ShiftRight', { ...context, mode: 'fly' }), 'move');
+});
+
+test('browser close-tab/window chords are never advertised as navigation input', () => {
+  for (const mode of ['walk', 'fly'] as const) {
+    const context = { mode, focused: true, active: true };
+    for (const code of ['KeyW', 'KeyC', 'KeyE', 'KeyV', 'Space', 'ShiftLeft']) {
+      assert.equal(navigationAction(code, { ...context, ctrlKey: true }), null);
+      assert.equal(navigationAction(code, { ...context, metaKey: true }), null);
+    }
+    assert.equal(navigationAction('KeyV', { ...context, mode: 'fly' }), null);
+  }
 });
 
 test('map shortcuts require canvas focus and leave ordinary browser/form shortcuts alone', () => {

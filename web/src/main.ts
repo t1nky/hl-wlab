@@ -63,8 +63,8 @@ const activeWalker = () => cs2?.walker ?? required(walker);
 
 const canvas = $('canvas');
 const HINTS = {
-  walk: 'Click to look · WASD move · Space jump · Ctrl/C crouch · E place target · Esc release mouse',
-  fly: 'Click to look · WASD fly · Space/Ctrl up/down · Shift fast · Esc release mouse',
+  walk: 'Click to look · WASD move · Space jump · C crouch · V toggle crouch · E place target · Esc release mouse',
+  fly: 'Click to look · WASD fly · Space/C up/down · Shift fast · Esc release mouse',
 };
 // Display preferences persist; scan inputs do not, so a reload never starts an unexpectedly expensive scan.
 
@@ -1593,6 +1593,11 @@ document.addEventListener('keydown', (e) => {
     }
     return;
   }
+  if (ownsNavigation() && (e.code === 'ControlLeft' || e.code === 'ControlRight')) {
+    $('modeHint').textContent =
+      mode === 'fly' ? 'Release Ctrl · hold C to descend' : 'Release Ctrl · hold C to crouch';
+    return;
+  }
   const action = navigationAction(e.code, {
     mode,
     active: ownsNavigation(),
@@ -1625,8 +1630,12 @@ document.addEventListener('keydown', (e) => {
   wakeNavigation();
 });
 document.addEventListener('keyup', (e) => {
+  if (e.code === 'ControlLeft' || e.code === 'ControlRight') {
+    if (!e.ctrlKey) navigationHint();
+    return;
+  }
   const key = movementKey(e.code);
-  if ((key === 'ControlLeft' && e.ctrlKey) || (key === 'ShiftLeft' && e.shiftKey)) return;
+  if (key === 'ShiftLeft' && e.shiftKey) return;
   if (keys.delete(key) && ownsNavigation()) wakeNavigation();
 });
 function fallbackLook() {
@@ -1682,7 +1691,7 @@ function tick(now: number) {
         forward: (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0),
         side: (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0),
         jump: keys.has('Space'),
-        duck: keys.has('ControlLeft') || crouchToggle,
+        duck: keys.has('KeyC') || crouchToggle,
       };
       if (cs2) {
         if (
@@ -1712,7 +1721,7 @@ function tick(now: number) {
       const speed = (keys.has('ShiftLeft') ? 1500 : 400) * dt,
         f = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0),
         s = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0),
-        z = (keys.has('Space') ? 1 : 0) - (keys.has('ControlLeft') ? 1 : 0);
+        z = (keys.has('Space') ? 1 : 0) - (keys.has('KeyC') ? 1 : 0);
       camera.position.x += (Math.cos(lookYaw) * f + Math.sin(lookYaw) * s) * speed;
       camera.position.y += (Math.sin(lookYaw) * f - Math.cos(lookYaw) * s) * speed;
       camera.position.z += z * speed;

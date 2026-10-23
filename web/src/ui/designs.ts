@@ -230,9 +230,9 @@ export const design = {
       ['Enter / ← →', 'Inspect / browse', 'walk fly'],
       ['WASD', 'Move', 'walk fly'],
       ['Space', 'Jump', 'walk'],
-      ['Ctrl / C', 'Crouch: hold / toggle', 'walk'],
+      ['C / V', 'Crouch: hold / toggle', 'walk'],
       ['E', 'Place target', 'walk'],
-      ['Space / Ctrl', 'Up / down', 'fly'],
+      ['Space / C', 'Up / down', 'fly'],
       ['Shift', 'Faster', 'fly'],
       ['Esc', 'Release / pause', 'walk fly'],
       ['Ctrl/⌘ Enter', 'Scan', 'walk fly'],
@@ -339,7 +339,7 @@ export const design = {
         ? `${fallback ? 'Drag to look · ' : ''}WASD move · E place target · Esc pause`
         : 'Click a result to inspect · Click map to walk',
       fly: active
-        ? `${fallback ? 'Drag to look · ' : ''}WASD fly · Space / Ctrl up & down · Esc pause`
+        ? `${fallback ? 'Drag to look · ' : ''}WASD fly · Space / C up & down · Esc pause`
         : 'Click a result to inspect · Click map to fly',
     };
     $('modeHint').textContent = hints[mode];

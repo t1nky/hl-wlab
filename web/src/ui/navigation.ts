@@ -16,23 +16,23 @@ export function movementKey(code: string) {
 
 // Focus is owned by the canvas, never by a form, button or open disclosure.
 export function navigationAction(code: string, context: Context): Action | null {
-  if (!context.focused || context.altKey || context.metaKey) return null;
-  if (!context.ctrlKey) {
-    if (code === 'ArrowRight') return 'next';
-    if (code === 'ArrowLeft') return 'previous';
-    if (!context.repeat) {
-      if (code === 'Enter') return 'next';
-      if (code === 'KeyF') return 'target';
-      if (code === 'Home') return 'map';
-    }
+  if (!context.focused || context.altKey || context.metaKey || context.ctrlKey) return null;
+  if (code === 'ArrowRight') return 'next';
+  if (code === 'ArrowLeft') return 'previous';
+  if (!context.repeat) {
+    if (code === 'Enter') return 'next';
+    if (code === 'KeyF') return 'target';
+    if (code === 'Home') return 'map';
   }
   if (!context.active) return null;
   if (context.mode === 'walk' && !context.repeat) {
     if (code === 'KeyE') return 'place';
-    if (code === 'KeyC' && !context.ctrlKey) return 'crouch';
+    if (code === 'KeyV') return 'crouch';
   }
   const key = movementKey(code);
-  return ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ControlLeft'].includes(key) ||
+  // Ctrl+W / Ctrl+Shift+W belong to Chrome even when the canvas owns input.
+  // Descent and held crouch use C so forward movement cannot close the tab.
+  return ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'KeyC'].includes(key) ||
     (context.mode === 'fly' && key === 'ShiftLeft')
     ? 'move'
     : null;

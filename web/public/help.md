@@ -30,8 +30,8 @@ Click a result to inspect damage or stand at that position.
 
 ## Controls
 
-- Fly/Walk: click empty map space to begin; WASD moves. Space jumps, Ctrl holds crouch,
-  C toggles crouch. In Fly, Space/Ctrl moves up/down and Shift moves faster.
+- Fly/Walk: click empty map space to begin; WASD moves. Space jumps, C holds crouch,
+  V toggles crouch. In Fly, Space/C moves up/down and Shift moves faster.
 - E places the target at your exact body position and view angle in Walk.
   Escape releases the mouse and pauses navigation. Editing controls, switching
   tabs or leaving the window also pauses movement.

@@ -129,6 +129,12 @@
           app.lab.camera.position.toArray().some((value, i) => value !== initial[i]),
           'PASS · held W moves the camera',
         );
+        key('KeyW', 'w', $('canvas'), 'keyup');
+        const flyHeight = app.lab.camera.position.z;
+        key('KeyC', 'c');
+        await rendered();
+        ok(app.lab.camera.position.z < flyHeight, 'PASS · C descends without a browser modifier');
+        key('KeyC', 'c', $('canvas'), 'keyup');
         key('Escape', 'Escape');
         await rendered();
         // Let the pointer-lock release and final capped frame settle before

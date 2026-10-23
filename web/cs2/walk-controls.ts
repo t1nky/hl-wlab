@@ -64,7 +64,7 @@ export function createWalkControls(options: {
     options.changed(
       true,
       controlling
-        ? `${fallback ? 'Drag to look · ' : ''}WASD walk · Space jump · Ctrl crouch · E target · Esc pause`
+        ? `${fallback ? 'Drag to look · ' : ''}WASD walk · Space jump · C crouch · E target · Esc pause`
         : 'Walk paused · click the map to look and move',
     );
   }
@@ -152,11 +152,8 @@ export function createWalkControls(options: {
       return;
     }
     if (!(document.pointerLockElement === canvas || document.activeElement === canvas)) return;
-    if (
-      ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ControlLeft', 'ControlRight', 'KeyC'].includes(
-        event.code,
-      )
-    ) {
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'KeyC'].includes(event.code)) {
       event.preventDefault();
       keys.add(event.code);
     }
@@ -191,7 +188,7 @@ export function createWalkControls(options: {
           forward: Number(keys.has('KeyW')) - Number(keys.has('KeyS')),
           side: Number(keys.has('KeyA')) - Number(keys.has('KeyD')),
           jump: keys.has('Space'),
-          duck: keys.has('ControlLeft') || keys.has('ControlRight') || keys.has('KeyC'),
+          duck: keys.has('KeyC'),
         },
       });
       if (token !== generation || !active) return;
