@@ -22,13 +22,12 @@ import { initializeSelectors, syncSelectors } from './ui/select.ts';
 import { initializeWeapons, selectedWeapon, selectedWeaponID, selectWeapon } from './ui/weapons.ts';
 import './style.css';
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { V3 } from '../cs2/types';
 import { aimAnchor, isAimPoint } from './engine/aims.ts';
 import { readBSP } from './engine/bsp.ts';
 import { damage, makeEngine } from './engine/engine.ts';
 import { Walker } from './engine/movement.ts';
-import { findWalkStart, postureSequence } from './engine/placement.ts';
+import { deployWalk, findWalkStart, postureSequence } from './engine/placement.ts';
 import { bestShot, countVisible, ROW } from './engine/results.ts';
 import { readStudio } from './engine/studio.ts';
 import { CS2, type GameAnalysis, GOLDSRC, type TargetInput, validateScan } from './games/contracts';
@@ -40,7 +39,7 @@ import { buildSkybox, importSkyFiles, skyName } from './render/skybox.ts';
 import { get, hash, put } from './storage/cache.ts';
 import { gameUI, poseUI, syncPoseFrame } from './ui/game-mode';
 
-type Mode = 'orbit' | 'walk' | 'fly';
+type Mode = 'walk' | 'fly';
 let cs2: Cs2Game | undefined;
 let modeRevision = 0;
 const goldsrc = new GoldsrcAnalysis(() => ({
@@ -63,8 +62,6 @@ const activeWalker = () => cs2?.walker ?? walker;
 
 const canvas = $('canvas');
 const HINTS = {
-  orbit:
-    'Drag orbit · Middle/right-drag pan · Scroll zoom · Click a result to inspect · F frame target',
   walk: 'Click to look · WASD move · Space jump · Ctrl/C crouch · E place target · Esc release mouse',
   fly: 'Click to look · WASD fly · Space/Ctrl up/down · Shift fast · Esc release mouse',
 };
@@ -86,7 +83,7 @@ renderer.setClearColor(0x111216);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 const scene = new THREE.Scene(),
   camera = new THREE.PerspectiveCamera(70, 1, 1, 40000),
-  orbit = new OrbitControls(camera, canvas);
+  viewTarget = new THREE.Vector3(1000, 250, 250);
 const performanceHUD = createPerformanceHUD(renderer, scene, $('viewport'));
 import.meta.hot?.dispose(() => performanceHUD.dispose());
 const glContext = renderer.getContext();
@@ -97,11 +94,7 @@ const softwareGPU =
     String(glContext.getParameter(gpuInfo.UNMASKED_RENDERER_WEBGL)),
   );
 camera.position.set(-500, -1500, 1500);
-orbit.target.set(1000, 250, 250);
-orbit.enableDamping = false;
-orbit.maxPolarAngle = Math.PI * 0.98;
-orbit.mouseButtons.MIDDLE = THREE.MOUSE.PAN;
-orbit.zoomToCursor = true;
+camera.lookAt(viewTarget);
 const mapGroup = new THREE.Group(),
   targetGroup = new THREE.Group();
 const inspectionGroup = new THREE.Group();
@@ -121,7 +114,7 @@ let bsp: BSP,
   shownCount = 0,
   selection: number | null = null,
   selectionLine: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial> | null,
-  mode: Mode = 'orbit',
+  mode: Mode = 'fly',
   walker: Walker,
   crouchToggle = false,
   walkPaused = false,
@@ -198,13 +191,10 @@ function ownsNavigation() {
   return navigationActive && document.activeElement === canvas && !document.hidden;
 }
 function navigationHint() {
-  $('crosshair').hidden = mode === 'orbit' || !ownsNavigation();
-  $('modeHint').textContent =
-    mode === 'orbit'
-      ? HINTS.orbit
-      : ownsNavigation()
-        ? HINTS[mode].replace('Click to look · ', dragLook ? 'Drag to look · ' : '')
-        : `Click map to ${mode} · Esc pauses movement`;
+  $('crosshair').hidden = !ownsNavigation();
+  $('modeHint').textContent = ownsNavigation()
+    ? HINTS[mode].replace('Click to look · ', dragLook ? 'Drag to look · ' : '')
+    : `Click a result to inspect · Click map to ${mode}`;
   design.mode(mode, ownsNavigation(), dragLook);
 }
 function pauseNavigation() {
@@ -450,13 +440,13 @@ function syncArmor() {
 }
 function focus() {
   if (!analysis().targetPose) return;
-  setMode('orbit');
-  const offset = camera.position.clone().sub(orbit.target);
+  setMode('fly');
+  const offset = camera.position.clone().sub(viewTarget);
   if (offset.lengthSq() < 1) offset.set(-1250, -1300, 1450);
   offset.setLength(Math.max(400, Math.min(2400, offset.length())));
-  orbit.target.copy(targetMarker.position);
-  camera.position.copy(orbit.target).add(offset);
-  orbit.update();
+  viewTarget.copy(targetMarker.position);
+  camera.position.copy(viewTarget).add(offset);
+  aimView();
   schedule();
 }
 async function loadAssets(next: Assets, remember = true) {
@@ -496,7 +486,7 @@ async function loadAssets(next: Assets, remember = true) {
   if (merged.library) await hydrateMapTextures(parsed, merged.library);
   const mdl = readStudio(merged.model),
     eng = await makeEngine(merged.map, parsed, merged.materials);
-  setMode('orbit');
+  setMode('fly');
   bsp = parsed;
   model = mdl;
   engine = eng;
@@ -558,10 +548,10 @@ async function loadImportedMap(ref: LibraryMapRef) {
   loadingScene = true;
   lockScan(false);
   bookmarks.setReady(false);
-  setMode('orbit');
+  setMode('fly');
   try {
     await loadAssets({ library: ref });
-    setMode('walk');
+    setMode('fly');
   } finally {
     loadingScene = false;
     lockScan(false);
@@ -609,7 +599,7 @@ function captureBookmark() {
       mode,
       position: camera.position.toArray(),
       quaternion: camera.quaternion.toArray(),
-      orbitTarget: orbit.target.toArray(),
+      orbitTarget: viewTarget.toArray(),
       yaw: lookYaw,
       pitch: lookPitch,
       walker:
@@ -627,7 +617,7 @@ async function restoreBookmark(assets: Assets, state: BookmarkState) {
   loadingScene = true;
   lockScan(false);
   bookmarks.setReady(false);
-  setMode('orbit');
+  setMode('fly');
   try {
     $('expansion').value = String(state.expansion);
     for (const id of PREFS) {
@@ -651,12 +641,13 @@ async function restoreBookmark(assets: Assets, state: BookmarkState) {
       walker.duck = view.walker.duck;
       walker.ground = view.walker.ground;
     }
-    setMode(view.mode);
+    setMode(view.mode === 'orbit' ? 'fly' : view.mode, false, false);
     lookYaw = view.yaw;
     lookPitch = view.pitch;
     camera.position.fromArray(view.position);
     camera.quaternion.fromArray(view.quaternion);
-    orbit.target.fromArray(view.orbitTarget);
+    viewTarget.fromArray(view.orbitTarget);
+    syncLookAngles();
     $('cut').value = String(view.cut);
     applyCut(view.cut);
     acc = 0;
@@ -752,101 +743,75 @@ function applySnapshot(text: string) {
   engine.syncBrushes();
   renderMap();
 }
-function setMode(next: Mode, fromSelection = false) {
-  if (next !== 'orbit' && !hasMap()) return;
-  if (next === mode && !fromSelection) {
-    modeRevision++;
-    return;
-  }
+async function setMode(next: Mode, fromSelection = false, deployCamera = true) {
+  if (next === 'walk' && !hasMap()) return;
+  const token = ++modeRevision;
   const previous = mode;
+  const game = cs2;
   pauseNavigation();
+  syncLookAngles();
+  if (next === mode && !fromSelection) return;
+  clearError();
   dragLook = false;
   walkPaused = fromSelection;
-  if (next === 'walk' && cs2) {
-    const game = cs2;
-    const token = ++modeRevision;
-    const source =
-      fromSelection && selection !== null
-        ? game.selection(selection, damageView()).eye
-        : (camera.position.toArray() as V3);
-    void game
-      .startWalk(
-        source,
-        !fromSelection && previous !== 'fly',
-        fromSelection && selection !== null
-          ? game.selection(selection, damageView()).crouched
-          : false,
-      )
-      .then((state) => {
+  if (next === 'walk') {
+    try {
+      if (game) {
+        const sample =
+          fromSelection && selection !== null ? game.selection(selection, damageView()) : undefined;
+        const state = sample
+          ? await game.startWalk(sample.eye, false, sample.crouched)
+          : deployCamera && previous === 'fly'
+            ? await game.deploy(camera.position.toArray() as V3)
+            : await game.startWalk(camera.position.toArray() as V3, true);
         if (cs2 !== game || modeRevision !== token) return;
         camera.position.fromArray(state.eye);
-        if (fromSelection) {
+        if (sample) {
           const d = new THREE.Vector3(...game.target).sub(camera.position);
           lookYaw = Math.atan2(d.y, d.x);
           lookPitch = Math.atan2(d.z, Math.hypot(d.x, d.y));
-        } else if (previous === 'orbit') {
-          const dir = camera.getWorldDirection(new THREE.Vector3());
-          lookYaw = Math.atan2(dir.y, dir.x);
-          lookPitch = Math.asin(dir.z);
         }
         crouchToggle = state.crouched;
-        finishMode(next);
-      })
-      .catch((e) => {
-        if (cs2 === game) error(e);
-      });
-    return;
-  }
-  modeRevision++;
-  if (next === 'walk') {
-    try {
-      if (fromSelection && selection !== null) {
-        const r = rows.subarray(selection * ROW, (selection + 1) * ROW);
-        walker = new Walker(engine, Array.from(r.slice(2, 5)));
-        walker.duck = !!r[0];
-        walker.ground = true;
-        const aim = pose.aims[shotAt(r).anchor],
-          eye = walker.eye,
-          d = aim.map((x, i) => x - eye[i]);
-        lookYaw = Math.atan2(d[1], d[0]);
-        lookPitch = Math.atan2(d[2], Math.hypot(d[0], d[1]));
-      } else if (!walker || walker.engine !== engine) {
-        const spawn = findWalkStart(engine, bsp, [
-          { p: targetSettings().p, yaw: targetSettings().yaw },
-        ]);
-        walker = new Walker(engine, spawn.p);
-        walker.ground = true; // findWalkStart already traced this walkable floor.
-        lookYaw = (spawn.yaw * Math.PI) / 180;
-        lookPitch = 0;
+      } else {
+        if (fromSelection && selection !== null) {
+          const r = rows.subarray(selection * ROW, (selection + 1) * ROW);
+          walker = new Walker(engine, Array.from(r.slice(2, 5)));
+          walker.duck = !!r[0];
+          walker.ground = true;
+          const aim = pose.aims[shotAt(r).anchor],
+            eye = walker.eye,
+            d = aim.map((x, i) => x - eye[i]);
+          lookYaw = Math.atan2(d[1], d[0]);
+          lookPitch = Math.atan2(d[2], Math.hypot(d[0], d[1]));
+        } else if (deployCamera && previous === 'fly') {
+          const placed = deployWalk(engine, camera.position.toArray(), bsp.world.mins[2]);
+          walker = new Walker(engine, placed.p);
+          walker.duck = placed.duck;
+          walker.ground = true;
+        } else if (!walker || walker.engine !== engine) {
+          const spawn = findWalkStart(engine, bsp);
+          walker = new Walker(engine, spawn.p);
+          walker.ground = true;
+        }
+        const fit = walker.trace(walker.p, walker.p);
+        if (fit[7] || fit[8])
+          throw Error('The player hull does not fit here. Fly to clear space and deploy again.');
+        camera.position.fromArray(walker.eye);
+        crouchToggle = walker.duck;
       }
-      const fit = walker.trace(walker.p, walker.p);
-      if (fit[7] || fit[8])
-        throw Error('The player hull does not fit here. Select another firing position.');
-      camera.position.fromArray(walker.eye);
-      crouchToggle = walker.duck;
       acc = 0;
     } catch (e) {
-      error(e);
+      if (modeRevision === token && cs2 === game) error(e);
       return;
     }
-  } else if (next === 'fly') {
-    const dir = new THREE.Vector3();
-    camera.getWorldDirection(dir);
-    lookYaw = Math.atan2(dir.y, dir.x);
-    lookPitch = Math.asin(dir.z);
-  } else if (next === 'orbit' && previous !== 'orbit') {
-    const dir = new THREE.Vector3();
-    camera.getWorldDirection(dir);
-    orbit.target.copy(camera.position).addScaledVector(dir, 250);
   }
   finishMode(next);
 }
 function finishMode(next: Mode) {
   mode = next;
   applyGameView();
-  if (next !== 'orbit') look();
-  orbit.enabled = next === 'orbit';
-  for (const id of ['orbit', 'walk', 'fly'] as const) {
+  look();
+  for (const id of ['fly', 'walk'] as const) {
     $(id).classList.toggle('active', id === next);
     $(id).setAttribute('aria-pressed', String(id === next));
   }
@@ -882,7 +847,17 @@ function look() {
     Math.sin(lookYaw) * Math.cos(lookPitch),
     Math.sin(lookPitch),
   );
-  camera.lookAt(camera.position.clone().add(d));
+  viewTarget.copy(camera.position).addScaledVector(d, 250);
+  camera.lookAt(viewTarget);
+}
+function syncLookAngles() {
+  const direction = camera.getWorldDirection(new THREE.Vector3());
+  lookYaw = Math.atan2(direction.y, direction.x);
+  lookPitch = Math.asin(Math.max(-1, Math.min(1, direction.z)));
+}
+function aimView() {
+  camera.lookAt(viewTarget);
+  syncLookAngles();
 }
 function clearSelection() {
   shotRevision++;
@@ -916,10 +891,12 @@ function selectPoint(i: number) {
   schedule();
 }
 function projectClick(e: PointerEvent) {
-  if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (!shownCount || e.metaKey || e.altKey) return false;
+  camera.updateMatrixWorld();
   const rect = canvas.getBoundingClientRect(),
-    mx = e.clientX - rect.left,
-    my = e.clientY - rect.top;
+    locked = document.pointerLockElement === canvas,
+    mx = locked ? rect.width / 2 : e.clientX - rect.left,
+    my = locked ? rect.height / 2 : e.clientY - rect.top;
   let best = -1,
     min = 12;
   const v = new THREE.Vector3(),
@@ -934,7 +911,10 @@ function projectClick(e: PointerEvent) {
       best = i;
     }
   }
-  if (best >= 0) selectPoint(best);
+  if (best < 0) return false;
+  pauseNavigation();
+  selectPoint(best);
+  return true;
 }
 // Percentages and ETA need the final grid size, even though tracing starts earlier.
 function progress(m: Omit<Progress, 'type'>, summary?: string) {
@@ -1130,7 +1110,7 @@ async function switchGame(next: string, mapId?: string) {
   if (busy || loadingScene || ((next === 'cs2') === !!cs2 && !mapId)) return;
   const previous = cs2;
   clearError();
-  setMode('orbit');
+  setMode('fly');
   modeRevision++;
   loadingScene = true;
   lockScan(false);
@@ -1145,7 +1125,7 @@ async function switchGame(next: string, mapId?: string) {
     if (!cs2)
       originalView = {
         camera: camera.position.toArray(),
-        target: orbit.target.toArray(),
+        target: viewTarget.toArray(),
         cut: cut.constant,
       };
     disposeGroup(mapGroup);
@@ -1192,11 +1172,11 @@ async function switchGame(next: string, mapId?: string) {
         updatePoints();
         camera.position.fromArray(game.state?.eye ?? game.target);
         const yaw = THREE.MathUtils.degToRad(game.meta.spawns[0]?.angles?.[1] ?? 0);
-        orbit.target
+        viewTarget
           .copy(camera.position)
           .add(new THREE.Vector3(Math.cos(yaw) * 512, Math.sin(yaw) * 512, 0));
-        camera.lookAt(orbit.target);
-        orbit.update();
+        camera.lookAt(viewTarget);
+        aimView();
         $('assetsStatus').textContent = `CS2 · ${game.meta.map}`;
         $('progressText').textContent = game.definition.scan.note;
         design.map(`CS2 / ${game.meta.map}`);
@@ -1238,8 +1218,8 @@ function restoreOriginalGame() {
     updateTarget(false);
     if (originalView) {
       camera.position.fromArray(originalView.camera);
-      orbit.target.fromArray(originalView.target);
-      orbit.update();
+      viewTarget.fromArray(originalView.target);
+      aimView();
       applyCut(originalView.cut);
     }
     void loadSkyForMap(bsp, assetSet);
@@ -1440,28 +1420,29 @@ $('performance').onchange = () => {
   performanceHUD.setEnabled($('performance').checked);
   if ($('performance').checked) schedule();
 };
-for (const id of ['orbit', 'walk', 'fly'] as const) $(id).onclick = () => setMode(id);
+for (const id of ['fly', 'walk'] as const) $(id).onclick = () => setMode(id);
+$('resumeWalk').onclick = () => setMode('walk', false, false);
 $('overview').onclick = () => {
   if (cs2) {
-    setMode('orbit');
+    setMode('fly');
     const center = cs2.bounds.getCenter(new THREE.Vector3());
     const size = cs2.bounds.getSize(new THREE.Vector3()).length();
-    orbit.target.copy(center);
+    viewTarget.copy(center);
     camera.position.copy(center).add(new THREE.Vector3(-0.4, -0.5, 0.9).multiplyScalar(size));
-    orbit.update();
+    aimView();
     applyCut(Number($('cut').max));
     schedule();
     return;
   }
   if (!bsp) return;
-  setMode('orbit');
+  setMode('fly');
   const lo = bsp.world.mins,
     hi = bsp.world.maxs,
     center = lo.map((x, i) => (x + hi[i]) / 2),
     size = Math.max(hi[0] - lo[0], hi[1] - lo[1]);
-  orbit.target.fromArray(center);
+  viewTarget.fromArray(center);
   camera.position.set(center[0] - size * 0.4, center[1] - size * 0.5, center[2] + size * 0.9);
-  orbit.update();
+  aimView();
   applyCut(Number($('cut').max));
   schedule();
 };
@@ -1534,39 +1515,31 @@ $('export').onclick = () => {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
 };
-orbit.addEventListener('change', schedule);
 canvas.addEventListener('pointerdown', (e) => {
-  if (mode !== 'orbit' && e.button !== 0) return;
+  if (e.button !== 0 || !hasMap()) return;
   canvas.focus({ preventScroll: true });
+  if (projectClick(e)) return;
   drag = { x: e.clientX, y: e.clientY };
-  if (mode !== 'orbit') {
-    navigationActive = true;
-    acc = 0;
-    last = performance.now();
-    navigationHint();
-    wakeNavigation();
-    try {
-      canvas.setPointerCapture(e.pointerId);
-    } catch {
-      /* Pointer capture is optional; pointer lock or drag-look still works. */
-    }
-    if (dragLook || document.pointerLockElement === canvas) return;
-    try {
-      if (canvas.requestPointerLock) canvas.requestPointerLock()?.catch?.(fallbackLook);
-      else fallbackLook();
-    } catch {
-      fallbackLook();
-    }
+  navigationActive = true;
+  acc = 0;
+  last = performance.now();
+  navigationHint();
+  wakeNavigation();
+  try {
+    canvas.setPointerCapture(e.pointerId);
+  } catch {
+    /* Pointer capture is optional; pointer lock or drag-look still works. */
+  }
+  if (dragLook || document.pointerLockElement === canvas) return;
+  try {
+    if (canvas.requestPointerLock) canvas.requestPointerLock()?.catch?.(fallbackLook);
+    else fallbackLook();
+  } catch {
+    fallbackLook();
   }
 });
 canvas.addEventListener('pointermove', (e) => {
-  if (
-    mode === 'orbit' ||
-    !ownsNavigation() ||
-    document.pointerLockElement === canvas ||
-    !drag ||
-    !(e.buttons & 1)
-  )
+  if (!ownsNavigation() || document.pointerLockElement === canvas || !drag || !(e.buttons & 1))
     return;
   lookYaw -= (e.clientX - drag.x) * 0.002;
   lookPitch = Math.max(-1.5, Math.min(1.5, lookPitch - (e.clientY - drag.y) * 0.002));
@@ -1575,18 +1548,11 @@ canvas.addEventListener('pointermove', (e) => {
   look();
   schedule();
 });
-canvas.addEventListener('pointerup', (e) => {
-  if (
-    e.button === 0 &&
-    mode === 'orbit' &&
-    drag &&
-    Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 5
-  )
-    projectClick(e);
+canvas.addEventListener('pointerup', () => {
   drag = null;
 });
 document.addEventListener('mousemove', (e) => {
-  if (mode === 'orbit' || !ownsNavigation() || document.pointerLockElement !== canvas) return;
+  if (!ownsNavigation() || document.pointerLockElement !== canvas) return;
   lookYaw -= e.movementX * 0.002;
   lookPitch = Math.max(-1.5, Math.min(1.5, lookPitch - e.movementY * 0.002));
   look();
@@ -1599,7 +1565,6 @@ document.addEventListener('keydown', (e) => {
       e.preventDefault();
       pauseNavigation();
     } else if (
-      mode === 'orbit' &&
       selection !== null &&
       !/INPUT|SELECT|TEXTAREA/.test((e.target as HTMLElement).tagName) &&
       !(e.target as HTMLElement).isContentEditable
@@ -1630,6 +1595,7 @@ document.addEventListener('keydown', (e) => {
   if (!action) return;
   e.preventDefault();
   if (action === 'next' || action === 'previous') {
+    pauseNavigation();
     const positions = pointCloud.geometry.getAttribute('position');
     const index = nextVisible(
       shown,
@@ -1654,7 +1620,7 @@ document.addEventListener('keyup', (e) => {
   if (keys.delete(key) && ownsNavigation()) wakeNavigation();
 });
 function fallbackLook() {
-  if (mode === 'orbit' || !ownsNavigation()) return;
+  if (!ownsNavigation()) return;
   dragLook = true;
   navigationHint();
 }
@@ -1674,7 +1640,7 @@ document.addEventListener('visibilitychange', () => {
 });
 document.addEventListener('pointerlockerror', fallbackLook);
 document.addEventListener('pointerlockchange', () => {
-  if (document.pointerLockElement === canvas && mode !== 'orbit' && ownsNavigation()) {
+  if (document.pointerLockElement === canvas && ownsNavigation()) {
     navigationHint();
     wakeNavigation();
     return;
@@ -1698,7 +1664,7 @@ function tick(now: number) {
   frameRequested = false;
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
-  if (mode !== 'orbit' && hasMap() && ownsNavigation()) {
+  if (hasMap() && ownsNavigation()) {
     let moving = false;
     if (mode === 'walk') {
       const body = activeWalker();

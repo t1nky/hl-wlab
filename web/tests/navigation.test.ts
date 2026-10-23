@@ -34,7 +34,7 @@ test('both modifier sides work and held crouch still permits WASD; OS shortcuts 
 });
 
 test('map shortcuts require canvas focus and leave ordinary browser/form shortcuts alone', () => {
-  const context = { mode: 'orbit' as const, focused: true, active: false };
+  const context = { mode: 'fly' as const, focused: true, active: false };
   assert.equal(navigationAction('KeyF', context), 'target');
   assert.equal(navigationAction('Home', context), 'map');
   assert.equal(navigationAction('Enter', context), 'next');

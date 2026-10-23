@@ -88,7 +88,34 @@
         output.textContent = 'Restoring imported map…';
         await app.lab.whenStarted();
         if (!app.labReady) throw Error('Import a map in the embedded app, then run the checks.');
-        app.lab.setMode('fly');
+        await app.lab.setMode('walk', false, false);
+        const walking = app.lab.walker.p.slice();
+        await app.lab.setMode('fly');
+        app.lab.camera.position.z += 24;
+        const facing = app.lab.camera.quaternion.toArray();
+        await app.lab.setMode('walk');
+        ok(
+          app.labDebug.mode === 'walk' &&
+            app.lab.walker.p.every((value, i) => Math.abs(value - walking[i]) < 0.001),
+          'PASS · Fly → Walk deploys vertically onto the same floor',
+        );
+        ok(
+          app.lab.camera.quaternion
+            .toArray()
+            .every((value, i) => Math.abs(value - facing[i]) < 0.000001),
+          'PASS · deployment preserves camera facing',
+        );
+        await app.lab.setMode('fly');
+        app.lab.camera.position.x += 100;
+        app.lab.camera.position.z += 100;
+        $('resumeWalk').click();
+        ok(
+          app.labDebug.mode === 'walk' &&
+            app.lab.walker.p.every((value, i) => Math.abs(value - walking[i]) < 0.001),
+          'PASS · Resume Walk returns to the previous position without deploying',
+        );
+        ok(!$('orbit'), 'PASS · camera modes contain only Fly and Walk');
+        await app.lab.setMode('fly');
         engage();
         await rendered();
         ok(
@@ -104,6 +131,9 @@
         );
         key('Escape', 'Escape');
         await rendered();
+        // Let the pointer-lock release and final capped frame settle before
+        // checking that an idle camera stops requesting more frames.
+        await delay(100);
         const paused = app.lab.camera.position.toArray();
         const idleFrame = app.labDebug.frame;
         await delay(180);
@@ -112,7 +142,7 @@
           'PASS · Escape releases movement',
         );
         ok(app.labDebug.frame === idleFrame, 'PASS · paused camera has no render loop');
-        app.lab.setMode('walk');
+        await app.lab.setMode('walk', false, false);
         engage();
         await rendered();
         const position = app.lab.walker.p.slice();
@@ -137,7 +167,7 @@
           app.lab.walker.p.every((value, i) => value === stationary[i]),
           'PASS · focused button cannot move player',
         );
-        app.lab.setMode('orbit');
+        await app.lab.setMode('fly');
         $('cut').value = '500';
         $('cut').dispatchEvent(new app.Event('input'));
         $('focus').click();

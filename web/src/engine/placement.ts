@@ -57,3 +57,23 @@ export function findWalkStart(
     'No clear standing spawn found. Import a valid player spawn or choose a firing position.',
   );
 }
+
+/** Project the player hull down from the Fly eye, without moving sideways or
+ * searching unrelated spawns. Hull traces include props and stacked floors. */
+export function deployWalk(engine: Pick<Engine, 'trace'>, eye: number[], minimumZ: number) {
+  if (eye.length !== 3 || !eye.every(Number.isFinite) || !Number.isFinite(minimumZ))
+    throw Error('Invalid deployment position.');
+  for (const duck of [false, true]) {
+    const hull = duck ? 3 : 1;
+    const origin = [eye[0], eye[1], eye[2] - (duck ? 12 : 17)];
+    const fit = engine.trace(origin, origin, hull);
+    if (fit[7] || fit[8]) continue;
+    const end = [origin[0], origin[1], Math.min(minimumZ - 128, origin[2] - 1)];
+    const floor = engine.trace(origin, end, hull);
+    if (floor[0] >= 1 || floor[7] || floor[8] || floor[6] < 0.7) continue;
+    const p = floor.slice(1, 4),
+      landed = engine.trace(p, p, hull);
+    if (!landed[7] && !landed[8]) return { p, duck };
+  }
+  throw Error('Cannot deploy here. Fly into clear space above a walkable surface.');
+}

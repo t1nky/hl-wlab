@@ -76,6 +76,22 @@ export class WalkController {
     }
     throw Error('No clear standing floor near source or map spawns; choose another source');
   }
+  deploy(eye: V3): WalkState {
+    if (!eye.every(Number.isFinite)) throw Error('Invalid deployment position');
+    const bottom = this.map.geometry.boundingBox?.min.z;
+    if (bottom === undefined) throw Error('Map collision bounds unavailable');
+    for (const crouched of [false, true]) {
+      const height = crouched ? CROUCH : STAND;
+      const foot: V3 = [eye[0], eye[1], eye[2] - (crouched ? 46 : 64)];
+      if (!this.map.playerFits(foot, height, true)) continue;
+      const drop = Math.max(1, foot[2] - bottom + 128);
+      const hit = this.map.sweepPlayer(foot, height, [0, 0, -drop]);
+      if (!hit || hit.normal[2] < 0.7) continue;
+      const landed: V3 = [foot[0], foot[1], foot[2] - drop * hit.fraction + SKIN];
+      if (this.map.playerFits(landed, height, true)) return this.teleport(landed, crouched);
+    }
+    throw Error('Cannot deploy here. Fly into clear space above a walkable surface.');
+  }
   private slide(
     start: Vector3,
     displacement: Vector3,

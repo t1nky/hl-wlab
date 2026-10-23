@@ -8,6 +8,48 @@ import { type Box, fixture } from './helpers/cs2-map';
 
 const floor: Box = { center: [0, 0, -10], size: [2000, 2000, 20] };
 const idle: WalkInput = { forward: 0, side: 0, jump: false, duck: false };
+
+describe('Fly to Walk deployment', () => {
+  it('lands on the first surface below the camera, including boxes and stacked floors', () => {
+    const map = fixture([
+      floor,
+      { center: [100, 50, 64], size: [80, 80, 128], bullet: false },
+      { center: [0, 0, 300], size: [600, 600, 10] },
+    ]);
+    const walker = new WalkController(map);
+    const box = walker.deploy([100, 50, 270]);
+    expect(box.foot).toEqual([100, 50, expect.closeTo(128.025, 3)]);
+    expect(box.grounded).toBe(true);
+    expect(box.crouched).toBe(false);
+    expect(walker.deploy([0, 0, 270]).foot[2]).toBeCloseTo(0.025, 3);
+    expect(walker.deploy([100, 50, 1200]).foot[2]).toBeCloseTo(305.025, 3);
+    map.dispose();
+  });
+  it('uses the player hull on narrow props and crouches when standing cannot fit', () => {
+    const map = fixture([
+      floor,
+      { center: [200, 0, 50], size: [8, 8, 100] },
+      { center: [0, 0, 70], size: [100, 100, 20] },
+    ]);
+    const walker = new WalkController(map);
+    expect(walker.deploy([200, 0, 300]).foot[2]).toBeCloseTo(100.025, 3);
+    const crouch = walker.deploy([0, 0, 50]);
+    expect(crouch.crouched).toBe(true);
+    expect(crouch.foot[2]).toBeCloseTo(0.025, 3);
+    expect(crouch.eye[2]).toBeCloseTo(46.025, 3);
+    map.dispose();
+  });
+  it('rejects solids and empty space below the map without changing the last walk position', () => {
+    const map = fixture([floor, { center: [0, 0, 100], size: [160, 160, 200] }]);
+    map.metadata.spawns.push({ classname: 'info_player_terrorist', origin: [500, 0, 1] });
+    const walker = new WalkController(map);
+    const previous = walker.teleport([300, 0, 0.025]);
+    expect(() => walker.deploy([0, 0, 64])).toThrow('Cannot deploy');
+    expect(() => walker.deploy([300, 0, -100])).toThrow('Cannot deploy');
+    expect(walker.state).toEqual(previous);
+    map.dispose();
+  });
+});
 function ticks(walker: WalkController, n: number, input: Partial<WalkInput> = {}, yaw = 0) {
   for (let i = 0; i < n; i++) walker.step(1 / 60, { ...idle, ...input }, yaw);
   return walker.state;

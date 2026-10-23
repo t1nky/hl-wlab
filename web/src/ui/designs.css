@@ -758,8 +758,14 @@
 [data-design="canvas"] #viewport::after {
   box-shadow: inset 0 0 80px 26px #111216a6;
 }
-[data-design]:not([data-camera="orbit"]) #viewport::after {
+[data-design][data-camera] #viewport::after {
   box-shadow: inset 0 0 32px 0 #11121677;
+}
+
+[data-design] .design-view-action {
+  width: 100%;
+  margin-top: 8px;
+  text-align: left;
 }
 
 @media (prefers-reduced-motion: reduce) {

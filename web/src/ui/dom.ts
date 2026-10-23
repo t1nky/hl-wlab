@@ -63,7 +63,7 @@ const elements = {
   cancel: element('cancel', HTMLButtonElement),
   progress: element('progress', HTMLProgressElement),
   progressText: element('progressText', HTMLElement),
-  orbit: element('orbit', HTMLButtonElement),
+  resumeWalk: element('resumeWalk', HTMLButtonElement),
   walk: element('walk', HTMLButtonElement),
   fly: element('fly', HTMLButtonElement),
   focus: element('focus', HTMLButtonElement),

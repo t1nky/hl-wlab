@@ -57,7 +57,7 @@ export const design = {
   initialize(actions: { clearSelection: () => void; resetFilters: () => void }) {
     initialized = true;
     root.dataset.inspector = 'open';
-    root.dataset.camera = 'orbit';
+    root.dataset.camera = 'fly';
     root.dataset.ready = 'false';
     root.dataset.scanning = 'false';
     root.dataset.results = 'false';
@@ -212,6 +212,8 @@ export const design = {
     const displayControls = node('div', 'design-view-popover');
     displayControls.setAttribute('aria-label', 'View settings');
     displayControls.append(...Array.from(viewbar.querySelectorAll(':scope > label')));
+    $('resumeWalk').classList.add('design-view-action');
+    displayControls.append($('resumeWalk'));
     const cutLabel = $('cut').closest('label');
     cutValue = node('output');
     cutValue.setAttribute('for', 'cut');
@@ -223,11 +225,9 @@ export const design = {
     const help = node('details', 'design-controls');
     const bindings = node('dl');
     for (const [key, text, modes] of [
-      ['Drag / wheel', 'Orbit / zoom', 'orbit'],
-      ['Middle / right', 'Pan', 'orbit'],
-      ['F / Home', 'Target / full map', 'orbit'],
-      ['Enter / ← →', 'Inspect / browse', 'orbit'],
-      ['Esc', 'Close / deselect', 'orbit'],
+      ['Click result', 'Inspect / pause', 'walk fly'],
+      ['F / Home', 'Target / full map', 'walk fly'],
+      ['Enter / ← →', 'Inspect / browse', 'walk fly'],
       ['WASD', 'Move', 'walk fly'],
       ['Space', 'Jump', 'walk'],
       ['Ctrl / C', 'Crouch: hold / toggle', 'walk'],
@@ -235,7 +235,7 @@ export const design = {
       ['Space / Ctrl', 'Up / down', 'fly'],
       ['Shift', 'Faster', 'fly'],
       ['Esc', 'Release / pause', 'walk fly'],
-      ['Ctrl/⌘ Enter', 'Scan', 'orbit walk fly'],
+      ['Ctrl/⌘ Enter', 'Scan', 'walk fly'],
     ]) {
       const term = node('dt', '', key),
         description = node('dd', '', text);
@@ -265,13 +265,12 @@ export const design = {
     $('overview').title = 'Fit the whole map and reset cutaway · Home';
     $('focus').textContent = 'Target';
     $('focus').title = 'Frame the target · F';
-    $('orbit').textContent = 'Map';
-    $('orbit').title = 'Orbit and inspect the map';
-    $('walk').title = 'Resume your walking position. Click the map to control it.';
+    $('walk').title =
+      'Deploy onto the surface below the Fly camera. View → Resume Walk returns to your previous position.';
     $('fly').title = 'Fly from the current camera position. Click the map to control it.';
     $('canvas').setAttribute(
       'aria-label',
-      '3D map. In Map view: Enter to inspect results, arrow keys to browse, F to frame target, Home to fit map. In Walk or Fly: click to control, Escape to pause.',
+      '3D map. Click a result to inspect; click empty space to control Fly or Walk. Escape pauses. Enter and arrow keys browse results; F frames the target and Home fits the map.',
     );
     const close = button('×', 'Close position details · Esc', actions.clearSelection);
     close.className = 'design-close';
@@ -328,7 +327,7 @@ export const design = {
       }
     }
   },
-  mode(mode: 'orbit' | 'walk' | 'fly', active = false, fallback = false) {
+  mode(mode: 'walk' | 'fly', active = false, fallback = false) {
     if (!initialized) return;
     root.dataset.camera = mode;
     root.dataset.navigating = String(active);
@@ -336,19 +335,16 @@ export const design = {
       row.term.hidden = row.description.hidden = !row.modes.includes(mode);
     }
     const hints = {
-      orbit: 'Drag to orbit · Scroll to zoom · Click a result to inspect',
       walk: active
         ? `${fallback ? 'Drag to look · ' : ''}WASD move · E place target · Esc pause`
-        : 'Click map to walk · E place target · Esc pause',
+        : 'Click a result to inspect · Click map to walk',
       fly: active
         ? `${fallback ? 'Drag to look · ' : ''}WASD fly · Space / Ctrl up & down · Esc pause`
-        : 'Click map to fly · Esc pause',
+        : 'Click a result to inspect · Click map to fly',
     };
     $('modeHint').textContent = hints[mode];
     $('modeHint').title =
-      mode === 'orbit'
-        ? 'Middle/right drag or Shift-drag to pan. F frames target; Home fits the map. Enter and arrow keys inspect results.'
-        : 'Movement pauses while using controls. Keyboard & mouse reference is in View.';
+      'Click a result to inspect it, or a result under the crosshair while looking. F frames the target; Home fits the map. Movement pauses while using controls.';
   },
   cut(value: number, maximum: number) {
     if (!initialized) return;

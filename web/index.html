@@ -245,9 +245,8 @@
       <article>
         <div class="viewbar">
           <fieldset class="buttons" aria-label="Camera mode">
-            <button type="button" id="orbit" class="active" aria-pressed="true">Orbit</button
-            ><button type="button" id="walk" aria-pressed="false">Walk</button
-            ><button type="button" id="fly" aria-pressed="false">Fly</button>
+            <button type="button" id="fly" class="active" aria-pressed="true">Fly</button
+            ><button type="button" id="walk" aria-pressed="false">Walk</button>
           </fieldset>
           <fieldset class="buttons" aria-label="Frame view">
             <button type="button" id="focus" title="Frame the target">Target</button
@@ -257,7 +256,13 @@
             class="inline"
             title="Lower to hide ceilings and upper floors. Fully right turns cutaway off."
             >Cutaway<input id="cut" type="range" min="-512" max="1800" value="600"></label
-          ><label class="inline" title="Show points through walls"
+          ><button
+            type="button"
+            id="resumeWalk"
+            title="Return to your previous walking position without deploying from Fly"
+          >
+            Resume Walk
+          </button><label class="inline" title="Show points through walls"
             ><input id="xray" type="checkbox" checked>X-ray</label
           ><label class="inline"><input id="textures" type="checkbox" checked>Textures</label
           ><label class="inline" title="Show baked map lighting and shadows"

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
-import { capturePlacement, findWalkStart } from '../src/engine/placement.ts';
+import { capturePlacement, deployWalk, findWalkStart } from '../src/engine/placement.ts';
 
 const sequences = [
   { index: 1, name: 'idle1' },
@@ -71,4 +71,52 @@ test('player spawn selection works before any atlas has been calculated', () => 
     p: [24, 40, 36.03125],
     yaw: 90,
   });
+});
+
+test('deployment traces the full player hull down from the Fly eye at the same X/Y', () => {
+  const calls: { start: number[]; end: number[]; hull: number }[] = [];
+  const engine = {
+    trace(start: number[], end: number[], hull: number) {
+      calls.push({ start, end, hull });
+      return start[2] === end[2]
+        ? [1, ...end, 0, 0, 0, 0, 0]
+        : [0.2, start[0], start[1], 164.03125, 0, 0, 1, 0, 0];
+    },
+  };
+  assert.deepEqual(deployWalk(engine, [120, 80, 400], -512), {
+    p: [120, 80, 164.03125],
+    duck: false,
+  });
+  assert.deepEqual(calls[0], { start: [120, 80, 383], end: [120, 80, 383], hull: 1 });
+  assert.deepEqual(calls[1], { start: [120, 80, 383], end: [120, 80, -640], hull: 1 });
+});
+
+test('deployment falls back to crouching and rejects invalid/steep/empty positions', () => {
+  const engine = {
+    trace(start: number[], end: number[], hull: number) {
+      if (hull === 1) return [0, ...start, 0, 0, 0, 1, 1];
+      return start[2] === end[2]
+        ? [1, ...end, 0, 0, 0, 0, 0]
+        : [0.2, start[0], start[1], 18.03125, 0, 0, 1, 0, 0];
+    },
+  };
+  assert.deepEqual(deployWalk(engine, [10, 20, 40], -512), { p: [10, 20, 18.03125], duck: true });
+  assert.throws(() => deployWalk(engine, [NaN, 0, 0], -512), /Invalid/);
+  for (const normal of [0, 0.5])
+    assert.throws(
+      () =>
+        deployWalk(
+          {
+            trace: (s, e) =>
+              s[2] === e[2] ? [1, ...e, 0, 0, 0, 0, 0] : [0.5, ...e, 0, 0, normal, 0, 0],
+          },
+          [0, 0, 100],
+          -512,
+        ),
+      /Cannot deploy/,
+    );
+  assert.throws(
+    () => deployWalk({ trace: (_s, e) => [1, ...e, 0, 0, 0, 0, 0] }, [0, 0, 100], -512),
+    /Cannot deploy/,
+  );
 });

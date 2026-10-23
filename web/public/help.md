@@ -30,15 +30,18 @@ Click a result to inspect damage or stand at that position.
 
 ## Controls
 
-- Map: drag to orbit, middle/right-drag or Shift-drag
-  to pan, scroll to zoom toward the cursor. Modified clicks do not move the target.
-- Walk/Fly: click the map to begin; WASD moves. Space jumps, Ctrl holds crouch,
+- Fly/Walk: click empty map space to begin; WASD moves. Space jumps, Ctrl holds crouch,
   C toggles crouch. In Fly, Space/Ctrl moves up/down and Shift moves faster.
 - E places the target at your exact body position and view angle in Walk.
   Escape releases the mouse and pauses navigation. Editing controls, switching
   tabs or leaving the window also pauses movement.
-- Walk resumes the previous walking position. Only Walk from here
-  moves to a selected firing position.
+- Switching Fly → Walk deploys onto the first walkable surface below your camera,
+  preserving X/Y and facing. Player collision includes boxes, narrow props and upper floors.
+  It tries crouching if standing will not fit; a blocked or empty position leaves you in Fly.
+  Choose **View → Resume Walk** to return to your previous walking position instead,
+  without deploying. **Walk from here** moves to the selected firing position.
+- Click a result in either mode to inspect it and pause movement. While the pointer
+  is locked, click a result under the crosshair. Click empty space to resume navigation.
 - With the map focused: F frames the target, Home fits the full map, Enter
   inspects a result, arrows browse visible results, Escape clears the selection.
 - Ctrl/⌘+Enter runs a scan. Changing target, weapon, spacing or radius clears

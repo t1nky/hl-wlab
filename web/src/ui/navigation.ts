@@ -1,4 +1,4 @@
-export type CameraMode = 'orbit' | 'walk' | 'fly';
+export type CameraMode = 'walk' | 'fly';
 type Action = 'move' | 'crouch' | 'place' | 'next' | 'previous' | 'target' | 'map';
 interface Context {
   mode: CameraMode;
@@ -17,15 +17,14 @@ export function movementKey(code: string) {
 // Focus is owned by the canvas, never by a form, button or open disclosure.
 export function navigationAction(code: string, context: Context): Action | null {
   if (!context.focused || context.altKey || context.metaKey) return null;
-  if (context.mode === 'orbit') {
-    if (context.ctrlKey) return null;
+  if (!context.ctrlKey) {
     if (code === 'ArrowRight') return 'next';
     if (code === 'ArrowLeft') return 'previous';
-    if (context.repeat) return null;
-    if (code === 'Enter') return 'next';
-    if (code === 'KeyF') return 'target';
-    if (code === 'Home') return 'map';
-    return null;
+    if (!context.repeat) {
+      if (code === 'Enter') return 'next';
+      if (code === 'KeyF') return 'target';
+      if (code === 'Home') return 'map';
+    }
   }
   if (!context.active) return null;
   if (context.mode === 'walk' && !context.repeat) {

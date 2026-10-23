@@ -16,6 +16,7 @@ type Request = { id: number } & (
   | { op: 'scan'; target: V3; settings?: ScanSettings; pose?: TargetPose }
   | { op: 'cancel' }
   | { op: 'walk-start'; eye: V3; crouched?: boolean }
+  | { op: 'walk-deploy'; eye: V3 }
   | { op: 'walk-reset' }
   | { op: 'walk-step'; dt: number; input: WalkInput; yaw: number }
 );
@@ -241,6 +242,12 @@ scope.onmessage = async ({ data }) => {
         const result = walker.start(data.eye, data.crouched);
         walkEye = data.eye;
         send(data.id, { kind: 'walk', ...result, ms: performance.now() - start });
+        break;
+      }
+      case 'walk-deploy': {
+        const state = walker.deploy(data.eye);
+        walkEye = state.eye;
+        send(data.id, { kind: 'walk', state });
         break;
       }
       case 'walk-reset': {

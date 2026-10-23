@@ -165,7 +165,7 @@ export class Cs2Game implements GameAnalysis {
     const spawn = this.meta.spawns[0]?.origin;
     if (spawn) await this.startWalk([spawn[0], spawn[1], spawn[2] + 64]);
     else {
-      // Custom maps without a spawn remain inspectable in orbit/fly. Walking can
+      // Custom maps without a spawn remain inspectable in Fly. Walking can
       // still be started from a floor chosen by the user.
       const center = this.bounds.getCenter(new THREE.Vector3());
       this.target = center.toArray() as V3;
@@ -176,6 +176,11 @@ export class Cs2Game implements GameAnalysis {
     if (!resume || !this.state)
       this.state = required((await this.request({ op: 'walk-start', eye, crouched })).state);
     return required(this.state);
+  }
+  async deploy(eye: V3) {
+    this.movement.pause();
+    this.state = required((await this.request({ op: 'walk-deploy', eye })).state);
+    return this.state;
   }
   async trace(source: V3, target = this.target) {
     if (this.targetPose) target = intersectTarget(source, target, this.targetPose)?.point ?? target;
