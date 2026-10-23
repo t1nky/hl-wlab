@@ -14,6 +14,7 @@ interface BenchReply extends ScanResult {
   startupMs: number;
   workersUsed: number;
   sharedBytes: number;
+  nativeTiming?: unknown;
   shot: Shot;
 }
 
@@ -123,6 +124,9 @@ export async function benchmarkScan(
         frames,
         maxFrameGapMs,
         sharedBytes: load.sharedBytes,
+        nativeTiming: load.nativeTiming,
+        native: result.native,
+        loadAndScanMs: loadWallMs + wallMs,
       });
     }
     cells = 0;

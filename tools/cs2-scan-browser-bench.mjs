@@ -57,6 +57,10 @@ const server = Bun.serve({
   port,
   async fetch(request) {
     const url = new URL(request.url);
+    if (url.pathname === '/scan.wasm')
+      return new Response(Bun.file('web/cs2/scan.wasm'), {
+        headers: { 'Content-Type': 'application/wasm', 'Cache-Control': 'no-store' },
+      });
     const worker = /^\/benchmark-(baseline|current|part)-worker\.js$/.exec(url.pathname);
     if (worker)
       return new Response(Bun.file(`${root}/${worker[1]}-worker.js`), {

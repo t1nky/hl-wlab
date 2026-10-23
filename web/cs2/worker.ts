@@ -2,6 +2,7 @@ import { CS2, type ScanSettings, validateScan } from '../src/games/contracts';
 import type { TargetPose } from '../src/games/target';
 import { type CollisionCache, CollisionMap } from './collision';
 import { WalkController, type WalkInput } from './movement';
+import { createNativeScan } from './native-scan';
 import { CS2_ROW, clearScanPlacementCache, type ScanStats, scanMap } from './scan';
 import { shareCollision } from './scan-parallel';
 import { ScanPool } from './scan-pool';
@@ -117,11 +118,24 @@ async function load(id: number, includeBuffer = true) {
   const cacheWriteMs = performance.now() - saveStart;
   pool?.dispose();
   let sharedBytes = 0;
+  let nativeTiming: object | undefined;
   if (globalThis.crossOriginIsolated && typeof SharedArrayBuffer !== 'undefined') {
-    const shared = shareCollision(map);
+    let native: Awaited<ReturnType<typeof createNativeScan>> | undefined;
+    try {
+      native = await createNativeScan(map);
+      nativeTiming = {
+        initMs: native.initMs,
+        bytes: native.shared.bytes,
+        acceleration: native.shared.acceleration,
+      };
+    } catch (error) {
+      nativeTiming = { fallback: String(error) };
+    }
+    const shared = shareCollision(map, native?.shared);
     sharedBytes = shared.bytes;
     map.dispose();
     map = new CollisionMap(shared.data, shared.metadata, shared.cache);
+    map.native = native;
     pool = new ScanPool(shared);
   } else pool = undefined;
   walker = new WalkController(map);
@@ -141,6 +155,7 @@ async function load(id: number, includeBuffer = true) {
       timings: { fetchMs, hashMs, cacheReadMs, cacheWriteMs, transferCopyMs },
       collisionBytes: buffer.byteLength,
       sharedBytes,
+      nativeTiming,
     },
     render ? [render] : [],
   );

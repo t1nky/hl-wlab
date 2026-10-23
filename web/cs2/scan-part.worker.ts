@@ -1,4 +1,5 @@
 import { CollisionMap } from './collision';
+import { attachNativeScan } from './native-scan';
 import { type ScanRequestData, scanMap } from './scan';
 import type { SharedCollision } from './scan-parallel';
 
@@ -7,7 +8,7 @@ let cancelled = false;
 self.onmessage = async ({
   data,
 }: MessageEvent<
-  | { op: 'init'; shared: SharedCollision }
+  | { op: 'init'; shared: SharedCollision; slot: number }
   | { op: 'scan'; request: ScanRequestData; cancel: Int32Array }
   | { op: 'cancel' }
 >) => {
@@ -15,6 +16,8 @@ self.onmessage = async ({
     if (data.op === 'init') {
       map?.dispose();
       map = new CollisionMap(data.shared.data, data.shared.metadata, data.shared.cache);
+      if (data.shared.native)
+        map.native = await attachNativeScan(data.shared.native, data.slot, data.shared.metadata);
       self.postMessage({ kind: 'ready' });
     } else if (data.op === 'cancel') cancelled = true;
     else {

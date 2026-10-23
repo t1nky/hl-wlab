@@ -11,6 +11,7 @@ import {
 import type { TargetPose } from '../src/games/target';
 import type { CollisionMap } from './collision';
 import { type DamageWeapon, targetDamage } from './damage';
+import { yieldScan } from './scan-yield';
 import { targetIntersector } from './target-intersection';
 import type { Shot, V3 } from './types';
 
@@ -30,6 +31,7 @@ export interface ScanRequestData {
   target: V3;
   settings: ScanSettings;
   pose?: TargetPose;
+  profile?: boolean;
   /** Internal row striping; merging restores the original y/x/floor/stance order. */
   partition?: { index: number; count: number };
 }
@@ -106,6 +108,20 @@ export async function scanMap(
   cancelled: () => boolean,
 ) {
   validateScan(request.settings, CS2);
+  const profile = {
+    placementMs: 0,
+    targetMs: 0,
+    bulletTraceMs: 0,
+    waitMs: 0,
+    yields: 0,
+    totalMs: 0,
+    otherMs: 0,
+  };
+  const scanStarted = performance.now();
+  const native = map.native;
+  native?.setWeapon(map.metadata.weapon);
+  native?.resetCounters();
+  let nativeFallbacks = 0;
   const { spacing, radius } = request.settings;
   const n = Math.floor(radius / spacing);
   const stats: ScanStats = {
@@ -128,6 +144,34 @@ export async function scanMap(
   const intersect = request.pose ? targetIntersector(request.pose) : undefined;
   let rows = new Float32Array(CS2_ROW * 4096),
     used = 0;
+  const pendingOffsets = new Uint32Array(1024);
+  let pendingCount = 0;
+  const flush = () => {
+    if (!native || !pendingCount) return;
+    const before = request.profile ? performance.now() : 0;
+    const results = native.traceBatch(pendingCount);
+    for (let i = 0; i < pendingCount; i++) {
+      const offset = pendingOffsets[i];
+      let damage = results[i * 3],
+        status = results[i * 3 + 1],
+        walls = results[i * 3 + 2];
+      if (status < 0) {
+        nativeFallbacks++;
+        const job = native.jobs.subarray(i * 6, i * 6 + 6);
+        const shot = map.trace([job[0], job[1], job[2]], [job[3], job[4], job[5]], 'bullet', false);
+        damage = shot.damage ?? -1;
+        status = statuses.indexOf(shot.status);
+        walls = shot.spans.length;
+      }
+      for (let copy = 0; copy < (request.pose ? 1 : 3); copy++) {
+        rows[offset + copy * 4] = damage;
+        rows[offset + copy * 4 + 1] = status;
+        rows[offset + copy * 4 + 2] = walls;
+      }
+    }
+    pendingCount = 0;
+    if (request.profile) profile.bulletTraceMs += performance.now() - before;
+  };
   const rowCounts = new Uint32Array(2 * n + 1);
   const partition = request.partition ?? { index: 0, count: 1 };
   if (
@@ -154,7 +198,13 @@ export async function scanMap(
         cache.delete(key);
       } else {
         cacheMisses++;
-        column = placementColumn(map, fx, fy);
+        const before = request.profile ? performance.now() : 0;
+        column = native?.column(fx, fy);
+        if (!column) {
+          if (native) nativeFallbacks++;
+          column = placementColumn(map, fx, fy);
+        }
+        if (request.profile) profile.placementMs += performance.now() - before;
       }
       cache.set(key, column);
       if (cache.size > columnLimit) cache.delete(cache.keys().next().value as string);
@@ -162,6 +212,7 @@ export async function scanMap(
       stats.floors += column.floors;
       stats.rejectedHull += column.rejectedHull;
       for (const { crouched, foot } of column.origins) {
+        if (pendingCount > 1020) flush();
         const eye: V3 = [foot[0], foot[1], foot[2] + (crouched ? 46 : 64)];
         const anchors = request.pose?.aims ?? [request.target];
         const row = [crouched, ...foot, eye[2]];
@@ -171,7 +222,9 @@ export async function scanMap(
             continue;
           }
           const aim = anchors[anchor] ?? anchors[0];
+          const beforeTarget = request.profile ? performance.now() : 0;
           const hit = intersect ? intersect(eye, aim) : null;
+          if (request.profile) profile.targetMs += performance.now() - beforeTarget;
           if (request.pose && (!hit || hit.distance < 0.1)) {
             row.push(0, 2, 0, 0);
             continue;
@@ -180,7 +233,15 @@ export async function scanMap(
             row.push(0, 2, 0, 0);
             continue;
           }
+          if (native) {
+            native.jobs.set([...eye, ...(hit?.point ?? aim)], pendingCount * 6);
+            pendingOffsets[pendingCount++] = used + 5 + anchor * 4;
+            row.push(0, 2, 0, hit?.group ?? 0);
+            continue;
+          }
+          const beforeTrace = request.profile ? performance.now() : 0;
           const shot = map.trace(eye, hit?.point ?? aim, 'bullet', false);
+          if (request.profile) profile.bulletTraceMs += performance.now() - beforeTrace;
           row.push(
             shot.damage ?? -1,
             statuses.indexOf(shot.status),
@@ -198,15 +259,31 @@ export async function scanMap(
         stats[crouched ? 'crouching' : 'standing']++;
       }
       if (performance.now() - yielded > 16) {
+        flush();
         progress({ ...stats });
-        await new Promise((r) => setTimeout(r, 0));
+        const beforeWait = performance.now();
+        await yieldScan();
+        if (request.profile) {
+          profile.waitMs += performance.now() - beforeWait;
+          profile.yields++;
+        }
         yielded = performance.now();
       }
     }
     rowCounts[y + n] = (used - rowStart) / CS2_ROW;
   }
+  flush();
   progress({ ...stats });
+  profile.totalMs = performance.now() - scanStarted;
+  profile.otherMs =
+    profile.totalMs -
+    profile.placementMs -
+    profile.targetMs -
+    profile.bulletTraceMs -
+    profile.waitMs;
   return {
+    native: native ? { counters: native.counters(), fallbacks: nativeFallbacks } : undefined,
+    profile: request.profile ? profile : undefined,
     rowCounts,
     rows: rows.slice(0, used),
     stats,

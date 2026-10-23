@@ -94,7 +94,7 @@ export class ScanPool {
             }
           }
         };
-        if (fresh) worker.postMessage({ op: 'init', shared: this.shared });
+        if (fresh) worker.postMessage({ op: 'init', shared: this.shared, slot: index + 1 });
         else run(worker, index);
       }
       if (fresh)

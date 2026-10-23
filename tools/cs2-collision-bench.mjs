@@ -150,7 +150,7 @@ for (const [name, settings] of workloads) {
     lastCells = -1;
   const result = await scanMap(
     map,
-    { target: pose.origin, pose, settings },
+    { target: pose.origin, pose, settings, profile: process.env.CS2_BENCH_PROFILE === '1' },
     (stats) => {
       if (stats.cells < lastCells) throw Error('Progress regressed');
       lastCells = stats.cells;
@@ -183,6 +183,7 @@ for (const [name, settings] of workloads) {
     ms,
     stats: result.stats,
     placementCache: result.placementCache,
+    profile: result.profile,
     rowBytes: rowBytes.length,
     sha256: hash(rowBytes),
     direct100,

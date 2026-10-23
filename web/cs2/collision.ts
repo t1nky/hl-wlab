@@ -1,6 +1,7 @@
 import { Box3, BufferAttribute, BufferGeometry, DoubleSide, Ray, Triangle, Vector3 } from 'three';
 import { CENTER, MeshBVH, type SerializedBVH } from 'three-mesh-bvh';
 import { penetrationLoss, penetrationParameters } from './damage';
+import type { NativeScan } from './native-scan';
 import { collisionRaycaster } from './trace-ray';
 import { triangleBoxIntersector } from './triangle-box';
 import { EPS, type MapData, type Metadata, required, type Shot, type Span, type V3 } from './types';
@@ -250,6 +251,7 @@ export function estimate(
 }
 
 export class CollisionMap {
+  native?: NativeScan;
   readonly geometry: BufferGeometry;
   readonly bvh: MeshBVH;
   readonly far: number;
@@ -534,6 +536,8 @@ export class CollisionMap {
     };
   }
   dispose() {
+    this.native?.dispose();
+    this.native = undefined;
     this.geometry.dispose();
   }
 }

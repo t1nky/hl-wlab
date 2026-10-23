@@ -7,13 +7,17 @@ import type { MapData } from './types';
 export function triangleRayIntersector(data: MapData) {
   const limit = 32768,
     stride = 15;
-  const keys = new Int32Array(limit).fill(-1);
-  const values = new Float64Array(limit * stride);
+  let keys: Int32Array | undefined;
+  let values: Float64Array;
   const a = new Vector3(),
     b = new Vector3(),
     c = new Vector3(),
     face = new Vector3();
   const intersect = (triangle: number, ray: Ray, point: Vector3, normal: Vector3) => {
+    if (!keys) {
+      keys = new Int32Array(limit).fill(-1);
+      values = new Float64Array(limit * stride);
+    }
     const slot = triangle & (limit - 1),
       at = slot * stride;
     if (keys[slot] !== triangle) {
@@ -79,5 +83,5 @@ export function triangleRayIntersector(data: MapData) {
     normal.set(values[at + 12], values[at + 13], values[at + 14]);
     return true;
   };
-  return Object.assign(intersect, { clear: () => keys.fill(-1) });
+  return Object.assign(intersect, { clear: () => keys?.fill(-1) });
 }

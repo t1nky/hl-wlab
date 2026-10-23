@@ -73,25 +73,36 @@ exports, before/after screenshots and development measurement reports stay local
 
 ## Exact spacing-16, radius-2048 scan and worker selection
 
-This follow-up uses **2438bab** as its one-worker baseline. The requested **3×
-single-worker speedup has not been achieved**. Parallel scaling is a separate
-convenience and does not satisfy that target. Cold means a fresh worker and empty
-placement/triangle caches; repeated means the same worker, settings and target.
+The strict-f64 WASM scan kernel achieves the requested **at least 3× cold
+single-worker scan speedup against 2438bab**, with unchanged workload. Parallel
+scaling is measured separately. Cold means a fresh worker and empty placement
+cache at a loaded map; repeated means the same worker, settings and target.
 Every shot is still retraced; there is no scan-result replay.
 
-The final paired browser harness measured baseline one-worker **21.945/22.023 s**
-cold/repeated versus current one-worker **16.546/11.303 s** (1.33×/1.95×).
-Current two-worker scans took **9.038/5.687 s**, four-worker scans **5.063/2.899 s**.
-These include scan-worker startup (54 ms for two, 67 ms for four) and result
-transfer/merge; map load is separate, about 0.42–0.45 s in this cached-BVH run.
-Earlier isolated baseline runs were 13.35/13.27 s, so workstation/browser
-conditions materially vary. Do not compare isolated and integrated-page runs
-or select a slower historical baseline to claim 3×.
+Two sequential paired browser runs, with identically bundled workers, measured
+baseline **12.979/12.836 s** and **13.077/13.026 s** cold/repeated, versus native
+**3.346/1.830 s** and **3.357/1.833 s**: **3.88–3.90× cold**, **7.01–7.11× repeated**.
+Actual module workers on the integrated development server also returned exact
+rows at **3.343/1.898 s**. Browser timings include request/response and result
+transfer; two/four-worker timings additionally include child startup and merge.
+The slower historical 21.945-second baseline is not used for this speedup claim.
 
-A final sequential fresh-process Bun pair measured baseline **12.533/13.178 s**
-and current **10.335/5.740 s** cold/repeated: **1.21×/2.30×**, also below the
-single-worker target. CPU profiling includes wrapper overhead; browser times
-above are actual Worker request/response wall time.
+The final standalone Bun run measured **3.542/1.991 s** against the pinned
+**12.533/13.178 s** baseline: **3.54× cold / 6.62× repeated**. An additional fresh
+baseline run was 13.745/13.549 s; it is preserved separately. CPU profiling includes
+wrapper overhead, so browser pairs are the primary production comparison.
+
+The final integrity-checked cache implementation returned **3.327/1.834 s** on
+one worker, **1.798/0.963 s** on two, and **0.939/0.495 s** on four. Two/four-worker
+startup was 54/62 ms, included above. All six full byte comparisons passed.
+
+First map initialization builds an additional SAH candidate index, **3.960 s**
+in the browser; total native initialization was **4.104 s**, loaded-map wall time
+**4.502 s**, and load plus cold scan **7.829 s**. Subsequent acceleration-cache reads
+reduce native initialization to **0.137–0.147 s**, including structural and SHA256
+validation (99–110 ms). These initialization costs are separate from the scan metric, just as
+the baseline BVH construction was separate. This is not a claim of 3× first-load
+end-to-end speed. Raw first-build and validated-cache timings are saved locally.
 
 All six current browser outputs were compared byte-for-byte to the saved
 2438bab output: **80,845 origins, 5,497,460 bytes**, SHA256
@@ -110,20 +121,42 @@ the previous pool; map-worker termination also terminates its owned children.
 Local dev responses enable COOP `same-origin` and COEP `require-corp`. Without
 cross-origin isolation/SharedArrayBuffer, the UI exposes one worker and explains
 the requirement; direct multi-worker requests fail explicitly. No per-worker
-full-map clone fallback is used. The immutable package/BVH backing stores occupy
-**115,857,192 shared bytes total**, shared with the coordinator too. Conversion
-temporarily holds both ordinary and shared stores during load. Metadata and
-small scratch/cache arrays remain local to each worker.
+full-map clone fallback is used. One actual `WebAssembly.Memory` owns the native
+geometry, candidate index and five bounded private context/stack slots. Geometry
+views are adopted by the JS collision map; its original BVH/indirect order stays
+shared for public traces, movement and overflow fallback. Total shared allocation
+is **183,956,804 bytes**, independent of selecting one, two or four workers, versus
+115,857,192 previously. Conversion/build temporarily retains ordinary stores too;
+the standalone first-build benchmark peaked near 737 MB RSS. Metadata and the
+bounded placement LRU remain local to each worker. Closed native handles drop
+their instance/memory/views; pool errors/count changes terminate child instances.
+
+The native index cache stores one map, keyed by binary SHA256, cache schema,
+kernel ABI, dependency versions and tree settings. SHA256 protects every derived
+array, including bounds. Validation also requires complete nonempty leaf coverage,
+an exact triangle permutation, coherent escapes/masks and original DFS ranks.
+Corrupt/version-mismatched data rebuilds; quota or native initialization failure
+retains the exact JavaScript path. Cache schema 2 invalidates the earlier prototype.
 
 The placement LRU budget is now 65,536 columns **across** the selected workers,
 enough for this scan's 51,433 columns (the former 16,384-column cache had zero
 repeat hits). One-worker retained placement heap was about 21.6 MB in the local
 GC experiment. Exact triangle edges/normals use a bounded 32,768-entry float64
-cache, about 4.06 MB per collision worker. One temporary XY candidate list reuses
+cache, about 4.06 MB per collision worker, allocated lazily for JS queries. One temporary XY candidate list reuses
 the broad phase for floor hulls/lifts; scalar SAT avoids per-triangle axis arrays.
 Ray slabs reuse reciprocal directions, and scans omit unused contact lists.
 The public inspector still returns complete contacts, spans, issues and losses.
 No geometry, range, density, uncertainty or placement rules are relaxed.
+
+The numeric kernel batches up to 1,024 rays and computes full SAT placement,
+shape intervals and damage without per-triangle JS objects. A packed 32-byte SAH
+tree reduces candidate work, then restores original DFS hit order before stable
+grouping/sorting. Equal-fraction sweep triangles retain original rank and SAT
+axis order, preserving tied normals. F64 arithmetic retains the JS operation
+order, disables contracted multiply-add/fast math, and imports host `Math.pow`.
+MessageChannel macrotasks keep cancel/trace messages responsive: final one-worker
+cancel completed in 2–22 ms, two/four in 2–7 ms, with continued 60 Hz browser frames.
+`scheduler.yield()` was rejected after it starved inbound one-worker messages.
 
 Collision geometry/flags remain immutable for a loaded map. Replace the map
 after geometry changes; `clearScanPlacementCache(map)` also clears the bounded
@@ -140,6 +173,7 @@ $env:CS2_BENCH_BASELINE = '1'
 bun tools/cs2-collision-bench.mjs head2438bab-before
 Remove-Item Env:CS2_BENCH_BASELINE
 bun tools/cs2-collision-bench.mjs current head2438bab-before
+bun tools/cs2-native-bench.mjs native-current
 bun tools/cs2-scan-browser-bench.mjs
 ```
 
@@ -152,6 +186,13 @@ while a sibling edits the checkout and saves JSON under the ignored output
 folder. Stop this helper when finished. Raw profiles, full rows, hashes,
 screenshots and implementation notes are in that folder; no private assets are
 copied into build output.
+
+Rebuild the checked-in kernel with
+`powershell -NoProfile -ExecutionPolicy Bypass -File tools/build-cs2-scan.ps1`
+(Zig 0.16.0 used for measurements). Numeric ABI/ownership notes are in
+`native/cs2/README.md`. Native pass measurements, rejected experiments, original
+byte fixtures, cache-corruption repro and handoff are under
+`.local/perf-scan-2048-20261022/native-pass/`.
 
 ## Shared application (recommended)
 

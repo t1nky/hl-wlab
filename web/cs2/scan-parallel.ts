@@ -1,4 +1,5 @@
 import type { CollisionCache, CollisionMap } from './collision';
+import type { SharedNativeScan } from './native-scan';
 import { CS2_ROW, type ScanStats, type scanMap } from './scan';
 import type { MapData, Metadata } from './types';
 
@@ -8,21 +9,23 @@ export interface SharedCollision {
   metadata: Metadata;
   cache: CollisionCache;
   bytes: number;
+  native?: SharedNativeScan;
 }
 /** Copy each backing store once, retaining package views/offsets. All recipients only read. */
-export function shareCollision(map: CollisionMap): SharedCollision {
+export function shareCollision(map: CollisionMap, native?: SharedNativeScan): SharedCollision {
   const stores = new Map<ArrayBufferLike, SharedArrayBuffer>();
   const share = (source: ArrayBufferLike) => {
     let shared = stores.get(source);
     if (!shared) {
-      shared = new SharedArrayBuffer(source.byteLength);
-      new Uint8Array(shared).set(new Uint8Array(source));
+      shared =
+        source instanceof SharedArrayBuffer ? source : new SharedArrayBuffer(source.byteLength);
+      if (shared !== source) new Uint8Array(shared).set(new Uint8Array(source));
       stores.set(source, shared);
     }
     return shared;
   };
   const data = Object.fromEntries(
-    Object.entries(map.data).map(([key, array]) => [
+    Object.entries(native?.data ?? map.data).map(([key, array]) => [
       key,
       key === 'positions'
         ? new Float32Array(share(array.buffer), array.byteOffset, array.length)
@@ -44,6 +47,7 @@ export function shareCollision(map: CollisionMap): SharedCollision {
     data,
     cache,
     metadata: map.metadata,
+    native,
     bytes: [...stores.values()].reduce((sum, buffer) => sum + buffer.byteLength, 0),
   };
 }
@@ -76,6 +80,15 @@ export function mergeScanParts(parts: ScanResult[]): ScanResult {
   if (offsets.some((offset, i) => offset !== parts[i].rows.length))
     throw Error('Scan partition row accounting mismatch');
   return {
+    native: parts.every((part) => part.native)
+      ? {
+          counters: (parts[0].native?.counters ?? []).map((_, index) =>
+            parts.reduce((sum, part) => sum + (part.native?.counters[index] ?? 0), 0),
+          ),
+          fallbacks: parts.reduce((sum, part) => sum + (part.native?.fallbacks ?? 0), 0),
+        }
+      : undefined,
+    profile: undefined,
     rows,
     rowCounts,
     stats: sumScanStats(parts.map((part) => part.stats)),
