@@ -1,8 +1,10 @@
-import type { ScanSettings } from '../src/games/contracts';
+import { CS2, type ScanSettings, validateScan } from '../src/games/contracts';
 import type { TargetPose } from '../src/games/target';
 import { type CollisionCache, CollisionMap } from './collision';
 import { WalkController, type WalkInput } from './movement';
-import { CS2_ROW, type ScanStats, scanMap } from './scan';
+import { CS2_ROW, clearScanPlacementCache, type ScanStats, scanMap } from './scan';
+import { shareCollision } from './scan-parallel';
+import { ScanPool } from './scan-pool';
 import { decodeMap, type Metadata, type V3 } from './types';
 
 type Request = { id: number } & (
@@ -20,6 +22,7 @@ let walker: WalkController;
 let walkEye: V3;
 let cancelled = false;
 let scanning = false;
+let pool: ScanPool | undefined;
 const scope = self as unknown as {
   onmessage: (event: MessageEvent<Request>) => void;
   postMessage: (value: unknown, transfer?: Transferable[]) => void;
@@ -98,7 +101,7 @@ async function load(id: number, includeBuffer = true) {
     map = new CollisionMap(decodeMap(buffer), meta);
   }
   const buildMs = performance.now() - buildStart;
-  walker = new WalkController(map);
+
   let cacheSaved = !!cached;
   const saveStart = performance.now();
   if (!cached) {
@@ -112,6 +115,16 @@ async function load(id: number, includeBuffer = true) {
     }
   }
   const cacheWriteMs = performance.now() - saveStart;
+  pool?.dispose();
+  let sharedBytes = 0;
+  if (globalThis.crossOriginIsolated && typeof SharedArrayBuffer !== 'undefined') {
+    const shared = shareCollision(map);
+    sharedBytes = shared.bytes;
+    map.dispose();
+    map = new CollisionMap(shared.data, shared.metadata, shared.cache);
+    pool = new ScanPool(shared);
+  } else pool = undefined;
+  walker = new WalkController(map);
   const transferStart = performance.now();
   const render = includeBuffer ? buffer.slice(0) : undefined;
   const transferCopyMs = performance.now() - transferStart;
@@ -127,23 +140,36 @@ async function load(id: number, includeBuffer = true) {
       cacheSaved,
       timings: { fetchMs, hashMs, cacheReadMs, cacheWriteMs, transferCopyMs },
       collisionBytes: buffer.byteLength,
+      sharedBytes,
     },
     render ? [render] : [],
   );
 }
 async function scan(id: number, target: V3, settings?: ScanSettings, pose?: TargetPose) {
   if (scanning) throw Error('A scan is already running');
+  const config = settings ?? { spacing: 64, radius: 768, workers: 1 };
+  validateScan(config, CS2);
+  if (config.workers > 1 && !pool)
+    throw Error(
+      'Parallel CS2 scanning requires cross-origin isolation (COOP/COEP headers). Select 1 worker.',
+    );
   scanning = true;
   cancelled = false;
   const start = performance.now();
   try {
-    const result = await scanMap(
-      map,
-      { target, settings: settings ?? { spacing: 64, radius: 768, workers: 1 }, pose },
-      (stats: ScanStats) =>
-        send(id, { kind: 'progress', tested: stats.cells, total: stats.total, stats }),
-      () => cancelled,
-    );
+    if (config.workers === 1) pool?.dispose();
+    else clearScanPlacementCache(map);
+    const request = { target, settings: config, pose };
+    const progress = (stats: ScanStats) =>
+      send(id, { kind: 'progress', tested: stats.cells, total: stats.total, stats });
+    const result =
+      config.workers > 1 && pool
+        ? await pool.scan(config.workers, request, progress)
+        : {
+            ...(await scanMap(map, request, progress, () => cancelled)),
+            workersUsed: 1,
+            startupMs: 0,
+          };
     // Compatibility for the isolated diagnostic page; the shared UI uses compact typed rows.
     const points = pose
       ? undefined
@@ -190,6 +216,7 @@ scope.onmessage = async ({ data }) => {
         break;
       case 'cancel':
         cancelled = true;
+        pool?.cancel();
         send(data.id, { kind: 'cancelled' });
         break;
       case 'walk-start': {

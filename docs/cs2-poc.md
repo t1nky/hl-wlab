@@ -39,9 +39,16 @@ so these are not hardware-GPU timings or moving-camera FPS claims.
 
 GoldSrc now reads original RGB lightmaps and packs a shared atlas for baked
 lighting and shadows. Local Inferno adds one **4 MiB** atlas and about **21 ms** of
-warm parse/build work, with unchanged geometry/draw calls. CS2 uses balanced
-Z-up sky/ground lighting and sunlight; this is not Source 2 baked lighting or
-shadow parity. Neither path adds full-map shadow-map or postprocessing passes.
+warm parse/build work, with unchanged geometry/draw calls. CS2 combines Z-up
+sky/ground lighting with original full-resolution baked sunlight visibility.
+Native BC4 blocks add a 32 MiB GPU atlas and about 31.7 MiB of native UNORM16 UVs;
+the atlas download is about 5.25 MiB. Paired isolated warm map loading measured
+1.347 → 1.449 s, and warm render submission CPU measured 2.27 → 2.36 ms on
+SwiftShader. Total package size is 293.5 MiB. Full irradiance, local-light shadow
+channels, exposure and game display parity remain unimplemented. Older packages
+or unsupported compressed-texture hardware keep the existing display lighting.
+Neither path adds full-map shadow-map or postprocessing passes.
+**View → Shadows** switches baked shading in place and remembers the preference.
 Armor/anchor reclassification reuses point GPU buffers, walking has a bounded
 physical-pixel budget, and idle map views do not schedule redraws.
 
@@ -64,6 +71,88 @@ The benchmark reconstructs only reference modules under ignored `.local`, checks
 the complete row bytes, and writes timing/hash/memory reports there. Raw map
 exports, before/after screenshots and development measurement reports stay local.
 
+## Exact spacing-16, radius-2048 scan and worker selection
+
+This follow-up uses **2438bab** as its one-worker baseline. The requested **3×
+single-worker speedup has not been achieved**. Parallel scaling is a separate
+convenience and does not satisfy that target. Cold means a fresh worker and empty
+placement/triangle caches; repeated means the same worker, settings and target.
+Every shot is still retraced; there is no scan-result replay.
+
+The final paired browser harness measured baseline one-worker **21.945/22.023 s**
+cold/repeated versus current one-worker **16.546/11.303 s** (1.33×/1.95×).
+Current two-worker scans took **9.038/5.687 s**, four-worker scans **5.063/2.899 s**.
+These include scan-worker startup (54 ms for two, 67 ms for four) and result
+transfer/merge; map load is separate, about 0.42–0.45 s in this cached-BVH run.
+Earlier isolated baseline runs were 13.35/13.27 s, so workstation/browser
+conditions materially vary. Do not compare isolated and integrated-page runs
+or select a slower historical baseline to claim 3×.
+
+A final sequential fresh-process Bun pair measured baseline **12.533/13.178 s**
+and current **10.335/5.740 s** cold/repeated: **1.21×/2.30×**, also below the
+single-worker target. CPU profiling includes wrapper overhead; browser times
+above are actual Worker request/response wall time.
+
+All six current browser outputs were compared byte-for-byte to the saved
+2438bab output: **80,845 origins, 5,497,460 bytes**, SHA256
+`5f404f65e0a4ca46d72e26b438b1e8e659cddc0c3b5b1449eab0b52f3ec0af27`.
+Helmet/100 armor, head aim, minimum 100 HP retains 1,367 standing direct and
+1,002 standing penetrating results. Full representative shot JSON also matches.
+
+The selector now runs **1, 2 or 4 actual scan workers**. One uses the existing
+collision worker; two/four use that worker as a responsive coordinator plus the
+selected number of scan workers. Striped grid rows balance work and merge in
+the original y/x/floor/stance order. Progress adds partition counts. An atomic
+shared cancellation flag stops all partitions; worker errors/initialization
+timeouts terminate the pool and permit a fresh retry. Changing counts releases
+the previous pool; map-worker termination also terminates its owned children.
+
+Local dev responses enable COOP `same-origin` and COEP `require-corp`. Without
+cross-origin isolation/SharedArrayBuffer, the UI exposes one worker and explains
+the requirement; direct multi-worker requests fail explicitly. No per-worker
+full-map clone fallback is used. The immutable package/BVH backing stores occupy
+**115,857,192 shared bytes total**, shared with the coordinator too. Conversion
+temporarily holds both ordinary and shared stores during load. Metadata and
+small scratch/cache arrays remain local to each worker.
+
+The placement LRU budget is now 65,536 columns **across** the selected workers,
+enough for this scan's 51,433 columns (the former 16,384-column cache had zero
+repeat hits). One-worker retained placement heap was about 21.6 MB in the local
+GC experiment. Exact triangle edges/normals use a bounded 32,768-entry float64
+cache, about 4.06 MB per collision worker. One temporary XY candidate list reuses
+the broad phase for floor hulls/lifts; scalar SAT avoids per-triangle axis arrays.
+Ray slabs reuse reciprocal directions, and scans omit unused contact lists.
+The public inspector still returns complete contacts, spans, issues and losses.
+No geometry, range, density, uncertainty or placement rules are relaxed.
+
+Collision geometry/flags remain immutable for a loaded map. Replace the map
+after geometry changes; `clearScanPlacementCache(map)` also clears the bounded
+triangle query cache. Weapon and pose changes always retrace current inputs.
+Serialized collision caches reject unsupported versions/layouts and rebuild.
+
+Reproduce the CPU parity/profile run from PowerShell:
+
+```powershell
+$env:CS2_BENCH_ROOT = '.local/perf-scan-2048-20261022'
+$env:CS2_BENCH_REV = '2438bab'
+$env:CS2_BENCH_2048 = '1'
+$env:CS2_BENCH_BASELINE = '1'
+bun tools/cs2-collision-bench.mjs head2438bab-before
+Remove-Item Env:CS2_BENCH_BASELINE
+bun tools/cs2-collision-bench.mjs current head2438bab-before
+bun tools/cs2-scan-browser-bench.mjs
+```
+
+With the integrated Vite server already on 8768, the last command serves a
+loopback benchmark proxy on 8772. Open its printed URL and run
+`await runScanBenchmark([1], 'browser-baseline', 'baseline')`, then
+`await runScanBenchmark([1,2,4], 'browser-current', 'current')`.
+Both worker revisions are bundled identically; the proxy suppresses HMR reloads
+while a sibling edits the checkout and saves JSON under the ignored output
+folder. Stop this helper when finished. Raw profiles, full rows, hashes,
+screenshots and implementation notes are in that folder; no private assets are
+copied into build output.
+
 ## Shared application (recommended)
 
 ```powershell
@@ -77,7 +166,7 @@ between **CS 1.6** and **CS2 · experimental**. The default URL stays CS1.6.
 The original UI, Three.js renderer, orbit/fly camera, pointer lock, sensitivity,
 WASD, Space, Ctrl/C, Escape, F/Home, E placement, result selection and filters
 are shared. Only collision, map loading and shot simulation change with the game.
-CS2 walking retains a 2,000-unit draw distance and a capped pixel budget;
+CS2 walking uses an 8,192-unit draw distance with fog beyond 6,554 units and a capped pixel budget;
 orbit and fly keep the full-map range. The legacy CS1.6 physics is unchanged.
 
 In **Target**, choose stance, animation clip and frozen frame, edit origin/yaw,
@@ -94,7 +183,7 @@ live animation graphs or IK; CS2 pitch layers are explicitly unsupported.
 The shared scan button, stop button, result selection, walk-from-result, aim
 selector and filters operate through one analysis contract. Each backend declares
 weapons, worker choices, pose choices, coordinate semantics and supported features.
-CS2's existing weapon/worker controls are locked to AWP/one worker. Unsupported
+CS2's weapon is locked to AWP; worker choices are 1/2/4 when shared memory is available. Unsupported
 MDL-only controls, bookmarks and import actions remain visibly disabled;
 there is no second CS2 inspector. Minimum damage is labelled **HP est.** for CS2 and **HP** for GoldSrc. Both now
 filter posed target HP, with separate backend-specific armor rules.

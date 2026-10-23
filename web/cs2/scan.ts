@@ -30,6 +30,8 @@ export interface ScanRequestData {
   target: V3;
   settings: ScanSettings;
   pose?: TargetPose;
+  /** Internal row striping; merging restores the original y/x/floor/stance order. */
+  partition?: { index: number; count: number };
 }
 
 interface PlacementColumn {
@@ -39,27 +41,32 @@ interface PlacementColumn {
 }
 // Geometry and player collision flags are immutable for a loaded map. Keep only a bounded
 // LRU of exact XY columns, independent of target pose, weapon, damage view and grid spacing.
-const COLUMN_LIMIT = 16384;
+export const SCAN_PLACEMENT_VERSION = 2;
+const COLUMN_LIMIT = 65536;
 const placementCaches = new WeakMap<CollisionMap, Map<string, PlacementColumn>>();
 export function clearScanPlacementCache(map: CollisionMap) {
   placementCaches.delete(map);
+  map.clearQueryCache();
 }
 function placementColumn(map: CollisionMap, x: number, y: number): PlacementColumn {
   const floors = floorCandidates(map, x, y);
   const column: PlacementColumn = { floors: floors.length, rejectedHull: 0, origins: [] };
+  if (!floors.length) return column;
   const seen: number[][] = [[], []];
-  for (const z of floors)
-    for (const crouched of [0, 1]) {
-      const foot = placeHull(map, x, y, z, crouched ? 54 : 72);
-      if (!foot) {
-        column.rejectedHull++;
-        continue;
+  return map.withPlacementColumn(x, y, () => {
+    for (const z of floors)
+      for (const crouched of [0, 1]) {
+        const foot = placeHull(map, x, y, z, crouched ? 54 : 72);
+        if (!foot) {
+          column.rejectedHull++;
+          continue;
+        }
+        if (seen[crouched].some((v) => Math.abs(v - foot[2]) < 1)) continue;
+        seen[crouched].push(foot[2]);
+        column.origins.push({ crouched, foot });
       }
-      if (seen[crouched].some((v) => Math.abs(v - foot[2]) < 1)) continue;
-      seen[crouched].push(foot[2]);
-      column.origins.push({ crouched, foot });
-    }
-  return column;
+    return column;
+  });
 }
 
 export function floorCandidates(map: CollisionMap, x: number, y: number): number[] {
@@ -67,17 +74,10 @@ export function floorCandidates(map: CollisionMap, x: number, y: number): number
   if (!bounds || x < bounds.min.x || x > bounds.max.x || y < bounds.min.y || y > bounds.max.y)
     return [];
   const levels: number[] = [];
-  for (const hit of map
-    .hits(new Vector3(x, y, bounds.max.z + 1), new Vector3(0, 0, -1), 'player')
-    .sort((a, b) => a.distance - b.distance)) {
-    if (
-      !hit.face ||
-      hit.face.normal.z < 0.7 ||
-      hit.faceIndex == null ||
-      map.metadata.shapes[map.data.shapes[hit.faceIndex]].tags.includes('sky')
-    )
-      continue;
-    if (!levels.some((z) => Math.abs(z - hit.point.z) < 0.1)) levels.push(hit.point.z);
+  for (const hit of map.floorHits(x, y, bounds.max.z + 1).sort((a, b) => a.distance - b.distance)) {
+    if (-hit.facing < 0.7 || map.metadata.shapes[hit.shape].tags.includes('sky')) continue;
+    const height = hit.z as number;
+    if (!levels.some((z) => Math.abs(z - height) < 0.1)) levels.push(height);
   }
   return levels;
 }
@@ -122,13 +122,26 @@ export async function scanMap(
     cache = new Map();
     placementCaches.set(map, cache);
   }
+  const columnLimit = Math.ceil(COLUMN_LIMIT / (request.partition?.count ?? 1));
   let cacheHits = 0,
     cacheMisses = 0;
   const intersect = request.pose ? targetIntersector(request.pose) : undefined;
   let rows = new Float32Array(CS2_ROW * 4096),
     used = 0;
+  const rowCounts = new Uint32Array(2 * n + 1);
+  const partition = request.partition ?? { index: 0, count: 1 };
+  if (
+    !Number.isInteger(partition.count) ||
+    partition.count < 1 ||
+    !Number.isInteger(partition.index) ||
+    partition.index < 0 ||
+    partition.index >= partition.count
+  )
+    throw Error('Invalid scan partition');
   let yielded = performance.now();
-  for (let y = -n; y <= n && !cancelled(); y++)
+  for (let y = -n; y <= n && !cancelled(); y++) {
+    if ((y + n) % partition.count !== partition.index) continue;
+    const rowStart = used;
     for (let x = -n; x <= n && !cancelled(); x++) {
       stats.cells++;
       if ((x * spacing) ** 2 + (y * spacing) ** 2 > radius ** 2) continue;
@@ -144,7 +157,7 @@ export async function scanMap(
         column = placementColumn(map, fx, fy);
       }
       cache.set(key, column);
-      if (cache.size > COLUMN_LIMIT) cache.delete(cache.keys().next().value as string);
+      if (cache.size > columnLimit) cache.delete(cache.keys().next().value as string);
       if (!column.floors) stats.noFloor++;
       stats.floors += column.floors;
       stats.rejectedHull += column.rejectedHull;
@@ -167,7 +180,7 @@ export async function scanMap(
             row.push(0, 2, 0, 0);
             continue;
           }
-          const shot = map.trace(eye, hit?.point ?? aim);
+          const shot = map.trace(eye, hit?.point ?? aim, 'bullet', false);
           row.push(
             shot.damage ?? -1,
             statuses.indexOf(shot.status),
@@ -190,8 +203,11 @@ export async function scanMap(
         yielded = performance.now();
       }
     }
+    rowCounts[y + n] = (used - rowStart) / CS2_ROW;
+  }
   progress({ ...stats });
   return {
+    rowCounts,
     rows: rows.slice(0, used),
     stats,
     cancelled: cancelled(),
@@ -199,7 +215,7 @@ export async function scanMap(
       hits: cacheHits,
       misses: cacheMisses,
       entries: cache.size,
-      limit: COLUMN_LIMIT,
+      limit: columnLimit,
     },
   };
 }

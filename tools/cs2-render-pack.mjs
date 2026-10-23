@@ -66,6 +66,37 @@ export function compactPrimitive(attributes, originalIndices, paintMode = 'envir
   return { attributes: result, indices };
 }
 
+/** Recover the source UNORM16 values, rather than re-quantizing chart placement.
+ * The exporter expands native shorts to float; reject any other precision/layout.
+ * Worst float reconstruction difference is < 3e-8 UV (<0.00028 atlas texels).
+ */
+export function packSunUv(attribute) {
+  if (attribute?.size !== 2 || !(attribute.array instanceof Float32Array))
+    throw Error('Invalid source sunlight UV accessor');
+  const array = new Uint16Array(attribute.array.length);
+  for (let i = 0; i < array.length; i++) {
+    const value = attribute.array[i];
+    const short = Math.round(value * 65535);
+    if (
+      !Number.isFinite(value) ||
+      short < 0 ||
+      short > 65535 ||
+      Math.abs(value - short / 65535) > 3e-8
+    )
+      throw Error('Sunlight UV is not native UNORM16');
+    array[i] = short;
+  }
+  return { array, size: 2, normalized: true };
+}
+
+export function bindSunUv(attributes, binding) {
+  if (binding?.mode !== 'lightmap') return;
+  if (!/^TEXCOORD_\d+$/.test(binding.attribute) || binding.storage !== 'UNORM16x2')
+    throw Error('Invalid sunlight binding');
+  attributes._CS2_LIGHT_UV = packSunUv(attributes[binding.attribute]);
+  binding.packedAttribute = '_CS2_LIGHT_UV';
+}
+
 export function packRenderGeometry(gltf, folder, basename) {
   const buffers = gltf.buffers.map(({ uri }) => {
     const path = resolve(folder, uri);
@@ -133,6 +164,11 @@ export function packRenderGeometry(gltf, folder, basename) {
           Object.entries(primitive.attributes).map(([name, index]) => [name, readAccessor(index)]),
         );
         const settings = gltf.materials[primitive.material]?.extras?.cs2;
+        bindSunUv(attributes, primitive.extras?.cs2Lighting);
+        // Lighting gets an independent custom attribute; UV1 can still serve material layers.
+        for (const key of Object.keys(attributes))
+          if (/^TEXCOORD_/.test(key) && key !== 'TEXCOORD_0' && key !== 'TEXCOORD_1')
+            delete attributes[key];
         if (!settings?.layers?.length) delete attributes._TEXCOORD_4;
         if (
           settings?.uv.channel !== 1 &&

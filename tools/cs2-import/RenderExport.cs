@@ -76,6 +76,8 @@ internal static class RenderExport
         var timer = Stopwatch.StartNew();
         var fingerprint = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(
             collisionFingerprint + File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-import/RenderExport.cs")) +
+            File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-import/RenderSunShadows.cs")) +
+            File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-import/RenderSunBlocks.cs")) +
             File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-import/RenderTint.cs")) +
             File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-prepare.mjs")) +
             File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-render-pack.mjs")))));
@@ -103,6 +105,7 @@ internal static class RenderExport
         var extract = new MapExtract(map, rawLoader);
         using var worldResource = rawLoader.LoadFileCompiled($"{extract.LumpFolder}/world.vwrld")!;
         var world = (World)worldResource.DataBlock!;
+        var sunShadows = RenderSunShadows.Export(world, rawLoader, folder);
         var nodes = world.GetWorldNodeNames().ToArray();
         var chunks = new List<string>();
         var textures = new Dictionary<string, TextureInfo>();
@@ -122,6 +125,7 @@ internal static class RenderExport
             exporter.Export(node, destination);
             var gltf = JsonNode.Parse(File.ReadAllText(destination))!.AsObject();
             excludedLods += FilterAggregateLods((WorldNode)node.DataBlock!, gltf);
+            RenderSunShadows.Bind((WorldNode)node.DataBlock!, gltf, rawLoader);
             CompactGeometry(gltf, folder, $"chunk-{i:D3}");
             var images = new JsonArray(); var gltfTextures = new JsonArray();
             if (gltf["materials"] is JsonArray materials)
@@ -282,6 +286,7 @@ internal static class RenderExport
                 usedFiles.Add("render/" + buffer.GetProperty("uri").GetString()!);
         }
         foreach (var texture in textures.Values) usedFiles.Add("render/" + texture.File);
+        usedFiles.Add(sunShadows["file"]!.GetValue<string>());
         var files = usedFiles.Order().Select(path => new { path, bytes = new FileInfo(Path.Combine(output, path)).Length }).ToArray();
         var metadata = new
         {
@@ -289,13 +294,14 @@ internal static class RenderExport
             prepareMs = timer.Elapsed.TotalMilliseconds, chunks, gltfToSource, textureMaxSize = TextureSize,
             meshCount, primitives, triangleCount, texturedTriangleCount, materialCount, excludedLods, textureCount = textures.Count,
             maskedTintMaterials, textureBytes = textures.Values.Sum(t => t.Bytes),
+            sunShadows,
             textureEncoding = new { opaque = "smallest of PNG / verified lossless WebP", alpha = "PNG", pixelRoundTripVerified = true,
                 webpCount = textures.Values.Count(t => t.File.EndsWith(".webp")) },
-            estimatedTextureGpuBytes = textures.Values.Sum(t => (long)t.Width * t.Height * 4 * 4 / 3),
+            estimatedTextureGpuBytes = textures.Values.Sum(t => (long)t.Width * t.Height * 4 * 4 / 3) + sunShadows["gpuBytes"]!.GetValue<int>(),
             totalBytes = files.Sum(f => f.bytes), files,
             warnings = warnings.Concat(new[] {
                 "Render geometry is for display only; separate vphys data drives shots and walking.",
-                "Base-color layers use vertex weights; height-based layer blending, normal/roughness maps, baked lighting and full Source shader parity omitted.",
+                "Base-color layers use vertex weights; sun visibility uses original BC4 lightmap blocks. Height blending, normal/roughness, baked irradiance and full Source shader parity omitted.",
                 "Otherwise-black environment instance tints are baked through per-layer height-green masks at capped mip resolution; other model tints and color correction remain approximations.",
                 "Static world-node models only; entity-driven doors, breakables, movable props, skybox and live state omitted."
             }),
@@ -431,10 +437,11 @@ internal static class RenderExport
             foreach (var primitive in mesh!["primitives"]!.AsArray())
             {
                 var attributes = primitive!["attributes"]!.AsObject();
+                var lightUv = primitive["extras"]?["cs2Lighting"]?["attribute"]?.GetValue<string>();
                 foreach (var key in attributes.Select(pair => pair.Key).ToArray())
                 {
                     // COLOR_0 is vertex paint; TEXCOORD4 carries environment layer weights.
-                    if (key is not ("POSITION" or "NORMAL" or "TEXCOORD_0" or "TEXCOORD_1" or "COLOR_0" or "_TEXCOORD_4")) attributes.Remove(key);
+                    if (key != lightUv && key is not ("POSITION" or "NORMAL" or "TEXCOORD_0" or "TEXCOORD_1" or "COLOR_0" or "_TEXCOORD_4")) attributes.Remove(key);
                     else attributes[key] = CopyAccessor(attributes[key]!.GetValue<int>());
                 }
                 primitive["indices"] = CopyAccessor(primitive["indices"]!.GetValue<int>());

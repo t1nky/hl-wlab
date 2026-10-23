@@ -153,7 +153,7 @@ export const CS2: GameDefinition = {
   id: 'cs2',
   label: 'CS2 · experimental',
   weapons: ['awp'],
-  workers: [1],
+  workers: [1, 2, 4],
   features: {
     armor: true,
     pitch: false,
@@ -182,6 +182,13 @@ export const CS2: GameDefinition = {
   damageUnit: 'HP est.',
   defaultSource: [77.46, 1227.8, 156.9],
 };
+export function availableWorkers(
+  definition: GameDefinition,
+  sharedMemory = globalThis.crossOriginIsolated === true &&
+    typeof SharedArrayBuffer !== 'undefined',
+): readonly number[] {
+  return definition.id === 'cs2' && !sharedMemory ? [1] : definition.workers;
+}
 export function validateScan(settings: ScanSettings, definition: GameDefinition) {
   const { spacing, radius, workers } = settings;
   if (

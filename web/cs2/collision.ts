@@ -1,15 +1,8 @@
-import {
-  Box3,
-  BufferAttribute,
-  BufferGeometry,
-  DoubleSide,
-  Ray,
-  type Triangle,
-  Vector3,
-} from 'three';
+import { Box3, BufferAttribute, BufferGeometry, DoubleSide, Ray, Triangle, Vector3 } from 'three';
 import { CENTER, MeshBVH, type SerializedBVH } from 'three-mesh-bvh';
 import { penetrationLoss, penetrationParameters } from './damage';
 import { collisionRaycaster } from './trace-ray';
+import { triangleBoxIntersector } from './triangle-box';
 import { EPS, type MapData, type Metadata, required, type Shot, type Span, type V3 } from './types';
 
 export interface Crossing {
@@ -24,6 +17,8 @@ export interface PlayerSweep {
 }
 
 export interface CollisionCache extends SerializedBVH {
+  version?: number;
+  indirectBuffer?: Uint16Array | Uint32Array;
   // Exact position bounds, rather than the BVH's padded float32 node bounds.
   bounds?: number[];
 }
@@ -261,7 +256,63 @@ export class CollisionMap {
   readonly data: MapData;
   readonly metadata: Metadata;
   private readonly rayCrossings: ReturnType<typeof collisionRaycaster>;
+  private column?: { x: number; y: number; indices: number[]; low: number[]; high: number[] };
+  private readonly columnTriangle = new Triangle();
+
+  /** One temporary XY broad phase for all placement lifts/heights/floors.
+   * Keep the original BVH depth-first triangle order, including sweep ties. */
+  withPlacementColumn<T>(x: number, y: number, run: () => T): T {
+    const column = { x, y, indices: [] as number[], low: [] as number[], high: [] as number[] };
+    let exceeded = false;
+    this.bvh.shapecast({
+      intersectsBounds: (box) =>
+        box.max.x >= x - 16.001 &&
+        box.min.x <= x + 16.001 &&
+        box.max.y >= y - 16.001 &&
+        box.min.y <= y + 16.001,
+      intersectsTriangle: (triangle, index) => {
+        if (!this.metadata.shapes[this.data.shapes[index]].player) return false;
+        if (column.indices.length === 65536) {
+          exceeded = true;
+          return true;
+        }
+        column.indices.push(index);
+        column.low.push(Math.min(triangle.a.z, triangle.b.z, triangle.c.z));
+        column.high.push(Math.max(triangle.a.z, triangle.b.z, triangle.c.z));
+        return false;
+      },
+    });
+    const previous = this.column;
+    this.column = exceeded ? undefined : column;
+    try {
+      return run();
+    } finally {
+      this.column = previous;
+    }
+  }
+  private playerTriangles(bounds: Box3, visit: (triangle: Triangle) => boolean) {
+    const column = this.column;
+    if (column) {
+      const { indices, positions } = this.data;
+      const triangle = this.columnTriangle;
+      for (let i = 0; i < column.indices.length; i++) {
+        if (column.high[i] < bounds.min.z || column.low[i] > bounds.max.z) continue;
+        const offset = column.indices[i] * 3;
+        triangle.a.fromArray(positions, indices[offset] * 3);
+        triangle.b.fromArray(positions, indices[offset + 1] * 3);
+        triangle.c.fromArray(positions, indices[offset + 2] * 3);
+        if (visit(triangle)) break;
+      }
+    } else
+      this.bvh.shapecast({
+        intersectsBounds: (box) => bounds.intersectsBox(box),
+        intersectsTriangle: (triangle, index) =>
+          this.metadata.shapes[this.data.shapes[index]].player && visit(triangle),
+      });
+  }
   constructor(data: MapData, metadata: Metadata, cached?: CollisionCache) {
+    if (cached && (cached.version !== 1 || !cached.indirectBuffer))
+      throw Error('Unsupported collision cache version/layout');
     this.data = data;
     this.metadata = metadata;
     this.geometry = new BufferGeometry();
@@ -286,6 +337,19 @@ export class CollisionMap {
         (h) => h.faceIndex != null && this.metadata.shapes[this.data.shapes[h.faceIndex]][kind],
       );
   }
+  floorHits(x: number, y: number, top: number) {
+    return this.rayCrossings(
+      new Vector3(x, y, top),
+      new Vector3(0, 0, -1),
+      'player',
+      this.far,
+      undefined,
+      true,
+    );
+  }
+  clearQueryCache() {
+    this.rayCrossings.clear();
+  }
   pick(source: V3, direction: V3, kind: 'bullet' | 'player' = 'bullet', maxZ = Infinity) {
     const hits = this.hits(
       new Vector3(...source),
@@ -302,7 +366,12 @@ export class CollisionMap {
         }
       : null;
   }
-  trace(source: V3, target: V3, kind: 'bullet' | 'player' = 'bullet'): Shot {
+  trace(
+    source: V3,
+    target: V3,
+    kind: 'bullet' | 'player' = 'bullet',
+    includeContacts = true,
+  ): Shot {
     const start = performance.now();
     if (![...source, ...target].every(Number.isFinite)) throw Error('Coordinates must be finite');
     const origin = new Vector3(...source),
@@ -315,23 +384,32 @@ export class CollisionMap {
       direction,
       kind,
       Math.max(this.far, distance + this.far),
+      kind === 'player' &&
+        direction.x === 0 &&
+        direction.y === 0 &&
+        direction.z === 1 &&
+        this.column?.x === source[0] &&
+        this.column?.y === source[1]
+        ? this.column
+        : undefined,
     );
     const contacts: Shot['contacts'] = [];
     const lastContact = new Map<number, number>();
-    for (const h of hits
-      .filter((h) => h.distance <= distance)
-      .sort((a, b) => a.distance - b.distance)) {
-      const shape = h.shape;
-      const previous = lastContact.get(shape);
-      if (previous != null && Math.abs(previous - h.distance) < EPS) continue;
-      lastContact.set(shape, h.distance);
-      contacts.push({
-        distance: h.distance,
-        material: h.material,
-        shape,
-        facing: h.facing,
-      });
-    }
+    if (includeContacts)
+      for (const h of hits
+        .filter((h) => h.distance <= distance)
+        .sort((a, b) => a.distance - b.distance)) {
+        const shape = h.shape;
+        const previous = lastContact.get(shape);
+        if (previous != null && Math.abs(previous - h.distance) < EPS) continue;
+        lastContact.set(shape, h.distance);
+        contacts.push({
+          distance: h.distance,
+          material: h.material,
+          shape,
+          facing: h.facing,
+        });
+      }
     const candidates = new Map<number, Crossing[]>();
     for (const h of hits) {
       const shape = h.shape;
@@ -394,11 +472,12 @@ export class CollisionMap {
       new Vector3(foot[0] + 16, foot[1] + 16, foot[2] + 73),
     );
     let overlap = false;
+    const intersects = triangleBoxIntersector(box);
     this.bvh.shapecast({
       intersectsBounds: (bounds) => bounds.intersectsBox(box),
       intersectsTriangle: (triangle, index) => {
         if (!this.metadata.shapes[this.data.shapes[index]].player) return false;
-        if (triangle.intersectsBox(box)) {
+        if (intersects(triangle)) {
           overlap = true;
           return true;
         }
@@ -421,14 +500,10 @@ export class CollisionMap {
     bounds.union(new Box3(bounds.min.clone().add(delta), bounds.max.clone().add(delta)));
     bounds.expandByScalar(0.001);
     let closest: PlayerSweep | null = null;
-    this.bvh.shapecast({
-      intersectsBounds: (box) => bounds.intersectsBox(box),
-      intersectsTriangle: (triangle, index) => {
-        if (!this.metadata.shapes[this.data.shapes[index]].player) return false;
-        const hit = sweepTriangle(triangle, center, half, delta);
-        if (hit && (!closest || hit.fraction < closest.fraction)) closest = hit;
-        return false;
-      },
+    this.playerTriangles(bounds, (triangle) => {
+      const hit = sweepTriangle(triangle, center, half, delta);
+      if (hit && (!closest || hit.fraction < closest.fraction)) closest = hit;
+      return false;
     });
     return closest;
   }
@@ -438,18 +513,15 @@ export class CollisionMap {
       new Vector3(foot[0] + 15.99, foot[1] + 15.99, foot[2] + height - 0.01),
     );
     let overlap = false;
-    this.bvh.shapecast({
-      intersectsBounds: (bounds) => bounds.intersectsBox(box),
-      intersectsTriangle: (triangle, index) => {
-        if (!this.metadata.shapes[this.data.shapes[index]].player) return false;
-        if (triangle.intersectsBox(box)) overlap = true;
-        return overlap;
-      },
+    const intersects = triangleBoxIntersector(box);
+    this.playerTriangles(box, (triangle) => {
+      if (intersects(triangle)) overlap = true;
+      return overlap;
     });
     if (overlap) return false;
     if (!checkInside) return true;
     const center: V3 = [foot[0], foot[1], foot[2] + height / 2];
-    return !this.trace(center, [center[0], center[1], center[2] + 1], 'player').spans.some(
+    return !this.trace(center, [center[0], center[1], center[2] + 1], 'player', false).spans.some(
       (span) => span.startInside,
     );
   }

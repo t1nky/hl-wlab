@@ -163,7 +163,8 @@ describe('CS2 standability and bounded shared scan', () => {
   it('validates requested cost and game capabilities instead of silently clamping controls', () => {
     expect(validateScan(CS2.scan.defaults, CS2)).toBe(7225);
     expect(() => validateScan({ spacing: 3, radius: 8192, workers: 1 }, CS2)).toThrow(/grid cells/);
-    expect(() => validateScan({ spacing: 24, radius: 1024, workers: 4 }, CS2)).toThrow(/workers/);
+    expect(validateScan({ spacing: 24, radius: 1024, workers: 4 }, CS2)).toBe(7225);
+    expect(() => validateScan({ spacing: 24, radius: 1024, workers: 8 }, CS2)).toThrow(/workers/);
     expect(CS2.weapons).toEqual(['awp']);
     expect(GOLDSRC.weapons.length).toBeGreaterThan(1);
     expect(GOLDSRC.features.armor).toBe(true);

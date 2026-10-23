@@ -3,28 +3,48 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { MeshBVH } from 'three-mesh-bvh';
 import { decodeMap } from '../web/cs2/types.ts';
 import { CS2 } from '../web/src/games/contracts.ts';
 import { playerPose } from '../web/src/games/target.ts';
 
-const root = '.local/perf-visual-20261022/collision';
+const root = process.env.CS2_BENCH_ROOT ?? '.local/perf-visual-20261022/collision';
+const revision = process.env.CS2_BENCH_REV ?? '334ac4b';
 mkdirSync(root, { recursive: true });
 const label = process.argv[2] ?? 'current';
 if (!/^[\w-]+$/.test(label)) throw Error('Use a simple output label');
 const reference = process.argv[3];
 const baseline = process.env.CS2_BENCH_BASELINE === '1';
 if (baseline) {
-  // Reconstruct only the two reference modules in ignored output, never mutate the checkout.
-  for (const file of ['collision', 'scan']) {
-    const source = execFileSync('git', ['show', `334ac4b:web/cs2/${file}.ts`], { encoding: 'utf8' })
-      .replaceAll("'./damage'", "'../../../web/cs2/damage'")
-      .replaceAll("'./types'", "'../../../web/cs2/types'")
+  // Preserve the exact revision's collision dependency closure in ignored output.
+  for (const file of ['collision', 'scan', 'damage', 'types', 'target-intersection', 'trace-ray']) {
+    if (file === 'target-intersection' || file === 'trace-ray') {
+      try {
+        execFileSync('git', ['cat-file', '-e', `${revision}:web/cs2/${file}.ts`], {
+          stdio: 'ignore',
+        });
+      } catch {
+        continue;
+      } // These helpers did not exist in the historical 334ac4b baseline.
+    }
+    const source = execFileSync('git', ['show', `${revision}:web/cs2/${file}.ts`], {
+      encoding: 'utf8',
+    })
+      .replaceAll("'./damage'", "'./reference-damage'")
+      .replaceAll("'./types'", "'./reference-types'")
       .replaceAll("'../src/", "'../../../web/src/")
-      .replaceAll("'./collision'", "'./reference-collision'");
-    writeFileSync(`${root}/reference-${file}.ts`, source);
+      .replaceAll("'./collision'", "'./reference-collision'")
+      .replaceAll("'./target-intersection'", "'./reference-target-intersection'")
+      .replaceAll("'./trace-ray'", "'./reference-trace-ray'");
+    writeFileSync(
+      `${root}/reference-${file}.ts`,
+      source.replaceAll(
+        '../../../web/',
+        `${relative(resolve(root), resolve('web')).replaceAll('\\', '/')}/`,
+      ),
+    );
   }
 }
 const { CollisionMap } = await import(
@@ -75,7 +95,7 @@ map.trace = (...args) => {
   traceMs += performance.now() - start;
   traced++;
   if (shots.length < 32 && shot.status === 'estimated-penetration') {
-    const { ms: _ms, ...stable } = shot;
+    const { ms: _ms, ...stable } = args[3] === false ? trace(args[0], args[1], args[2]) : shot;
     shots.push(stable);
   }
   return shot;
@@ -104,12 +124,19 @@ for (const [name, fn] of [
     return result;
   };
 }
-for (const [name, settings] of [
-  ['default-cold', CS2.scan.defaults],
-  ['default-warm', CS2.scan.defaults],
-  ['dense-cold', { spacing: 16, radius: 1024, workers: 1 }],
-  ['dense-warm', { spacing: 16, radius: 1024, workers: 1 }],
-]) {
+const workloads =
+  process.env.CS2_BENCH_2048 === '1'
+    ? [
+        ['exact2048-cold', { spacing: 16, radius: 2048, workers: 1 }],
+        ['exact2048-warm', { spacing: 16, radius: 2048, workers: 1 }],
+      ]
+    : [
+        ['default-cold', CS2.scan.defaults],
+        ['default-warm', CS2.scan.defaults],
+        ['dense-cold', { spacing: 16, radius: 1024, workers: 1 }],
+        ['dense-warm', { spacing: 16, radius: 1024, workers: 1 }],
+      ];
+for (const [name, settings] of workloads) {
   if (name.endsWith('-cold')) clearScanPlacementCache?.(map);
   traced = 0;
   traceMs = 0;
@@ -186,6 +213,7 @@ const report = {
   label,
   reference,
   baseline,
+  revision: baseline ? revision : undefined,
   engine: process.versions,
   conditions:
     'Fresh process; filesystem cache uncontrolled. Cold/warm refer to scan placement cache (cleared before each cold workload); BVH build and restoration timed separately. CPU wall time, no GPU timings. After memory is after Bun.gc(true); per-scan memory includes transient allocations.',

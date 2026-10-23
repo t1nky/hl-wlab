@@ -5,4 +5,5 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup><Compile Include="../cs2-import/RenderTint.cs" Link="RenderTint.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../cs2-import/RenderSunBlocks.cs" Link="RenderSunBlocks.cs" /></ItemGroup>
 </Project>

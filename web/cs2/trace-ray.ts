@@ -1,12 +1,14 @@
 /// <reference path="./trace-ray.d.ts" />
-import { Ray, Triangle, Vector3 } from 'three';
+import { Ray, Vector3 } from 'three';
 import { MeshBVH } from 'three-mesh-bvh';
-import { intersectRay } from 'three-mesh-bvh/src/core/utils/intersectUtils.js';
 import type { Crossing } from './collision';
+import { RayBoxTester } from './ray-box';
+import { triangleRayIntersector } from './triangle-ray';
 import { EPS, type MapData, type Metadata } from './types';
 
 export interface TraceCrossing extends Crossing {
   shape: number;
+  z?: number;
 }
 
 /** A collision-only reader for three-mesh-bvh 0.9.8's version-1 indirect nodes.
@@ -26,51 +28,65 @@ export function collisionRaycaster(bvh: MeshBVH, data: MapData, metadata: Metada
     ints: new Uint32Array(root),
     shorts: new Uint16Array(root),
   }));
-  const a = new Vector3(),
-    b = new Vector3(),
-    c = new Vector3();
+  const intersect = triangleRayIntersector(data);
   const point = new Vector3(),
     normal = new Vector3();
   const ray = new Ray();
-  const { positions, indices, shapes, materials } = data;
-  return (source: Vector3, direction: Vector3, kind: 'bullet' | 'player', far: number) => {
+  const box = new RayBoxTester();
+  const { shapes, materials } = data;
+  const cast = (
+    source: Vector3,
+    direction: Vector3,
+    kind: 'bullet' | 'player',
+    far: number,
+    column?: { indices: number[]; low: number[]; high: number[] },
+    collectZ = false,
+  ) => {
     ray.origin.copy(source);
     ray.direction.copy(direction);
     const hits: TraceCrossing[] = [];
     const near = EPS / 10;
+    box.set(ray, near, far);
+    const triangleHit = (triangle: number) => {
+      const shape = shapes[triangle];
+      if (!metadata.shapes[shape][kind]) return;
+      if (!intersect(triangle, ray, point, normal)) return;
+      const distance = ray.origin.distanceTo(point);
+      if (distance < near || distance > far) return;
+      const hit: TraceCrossing = {
+        distance,
+        facing: normal.dot(direction),
+        material: materials[triangle],
+        shape,
+      };
+      if (collectZ) hit.z = point.z;
+      hits.push(hit);
+    };
+    if (column) {
+      for (let i = 0; i < column.indices.length; i++) {
+        if (column.high[i] < source.z || column.low[i] > source.z + far) continue;
+        triangleHit(column.indices[i]);
+      }
+      return hits;
+    }
     for (const { floats, ints, shorts } of roots) {
       const visit = (node: number) => {
         if (shorts[node * 2 + 15] === 65535) {
           const first = ints[node + 6],
             end = first + shorts[node * 2 + 14];
           for (let i = first; i < end; i++) {
-            const triangle = indirectBuffer[i],
-              shape = shapes[triangle];
-            if (!metadata.shapes[shape][kind]) continue;
-            const offset = triangle * 3;
-            a.fromArray(positions, indices[offset] * 3);
-            b.fromArray(positions, indices[offset + 1] * 3);
-            c.fromArray(positions, indices[offset + 2] * 3);
-            if (!ray.intersectTriangle(a, b, c, false, point)) continue;
-            const distance = ray.origin.distanceTo(point);
-            if (distance < near || distance > far) continue;
-            Triangle.getNormal(a, b, c, normal);
-            hits.push({
-              distance,
-              facing: normal.dot(direction),
-              material: materials[triangle],
-              shape,
-            });
+            triangleHit(indirectBuffer[i]);
           }
         } else {
           const left = node + 8,
             right = node + ints[node + 6] * 8;
-          if (intersectRay(left, floats, ray, near, far)) visit(left);
-          if (intersectRay(right, floats, ray, near, far)) visit(right);
+          if (box.intersects(left, floats)) visit(left);
+          if (box.intersects(right, floats)) visit(right);
         }
       };
       visit(0);
     }
     return hits;
   };
+  return Object.assign(cast, { clear: () => intersect.clear() });
 }

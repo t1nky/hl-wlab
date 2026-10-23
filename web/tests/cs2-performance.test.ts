@@ -178,7 +178,7 @@ describe('CS2 collision performance equivalence', () => {
       previous = -1;
     const result = await scanMap(
       map,
-      { target: [0, 0, 80], settings: { spacing: 12, radius: 1200, workers: 1 } },
+      { target: [0, 0, 80], settings: { spacing: 12, radius: 1800, workers: 1 } },
       (stats) => {
         expect(stats.cells).toBeGreaterThanOrEqual(previous);
         previous = stats.cells;
@@ -202,7 +202,7 @@ describe('CS2 collision performance equivalence', () => {
     const map = fixture([{ center: [0, 0, -10], size: [100, 100, 20] }]);
     const request = {
       target: [100000, 100000, 80] as V3,
-      settings: { spacing: 12, radius: 1200, workers: 1 },
+      settings: { spacing: 12, radius: 1800, workers: 1 },
     };
     const result = await scanMap(
       map,

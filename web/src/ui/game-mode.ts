@@ -1,4 +1,9 @@
-import { type GameDefinition, GOLDSRC, type PoseChoice } from '../games/contracts';
+import {
+  availableWorkers,
+  type GameDefinition,
+  GOLDSRC,
+  type PoseChoice,
+} from '../games/contracts';
 import { $, control, type ElementID } from './dom';
 import { syncSelectors } from './select';
 import { initializeWeapons } from './weapons';
@@ -73,7 +78,8 @@ export function gameUI(definition: GameDefinition) {
   active = definition;
   const saved = state.get(definition.id);
   initializeWeapons(definition.weapons);
-  $('workers').replaceChildren(...definition.workers.map((n) => new Option(String(n), String(n))));
+  const workers = availableWorkers(definition);
+  $('workers').replaceChildren(...workers.map((n) => new Option(String(n), String(n))));
   if (saved) for (const [id, value] of saved) control(id).value = value;
   else {
     $('spacing').value = String(definition.scan.defaults.spacing);
@@ -91,6 +97,7 @@ export function gameUI(definition: GameDefinition) {
         $(id).value = String(definition.defaultSource?.[i]);
       });
   }
+  if (!workers.includes(Number($('workers').value))) $('workers').value = '1';
   desiredSequence = saved?.get('sequence') ?? String(definition.target.defaults.sequence);
   for (const binding of bindings)
     binding.ids.forEach((id, i) => {
@@ -101,9 +108,15 @@ export function gameUI(definition: GameDefinition) {
     });
   $('weapon').disabled = definition.weapons.length === 1;
   $('weapon').title = $('weapon').disabled ? 'Only one weapon is supported by this backend.' : '';
-  $('workers').disabled = definition.workers.length === 1;
+  $('workers').disabled = workers.length === 1;
+  const workerLabel = $('workers').closest('label');
+  if (workerLabel)
+    workerLabel.title =
+      definition.id === 'cs2'
+        ? 'Parallel CS2 collision scan workers'
+        : 'Parallel WebAssembly trace workers';
   $('workers').title = $('workers').disabled
-    ? 'This backend uses one accelerated collision worker.'
+    ? 'Parallel CS2 scanning requires cross-origin isolation (COOP/COEP headers).'
     : '';
   $('spacing').disabled = $('radius').disabled = false;
   $('spacing').min = String(definition.scan.minSpacing);

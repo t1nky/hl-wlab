@@ -20,6 +20,7 @@ import { type batchStaticMap, batchStaticMapAsync } from './render-batches';
 import { decodeRenderViews, type RenderDecodeTimings } from './render-decode';
 import { type Cs2Material, diffuseMaterial } from './render-materials';
 import { yieldRenderTask } from './render-schedule';
+import { hasSunBinding, loadSunVisibility, type SunLighting, type SunMetadata } from './render-sun';
 
 let decoderWorkersStarted = false;
 
@@ -42,6 +43,7 @@ export interface RenderMetadata {
   warnings: string[];
   compactPrimitiveBounds?: number;
   packageHash?: string;
+  sunShadows?: SunMetadata;
   runtimeBounds?: {
     geometryCount: number;
     shrunkCount: number;
@@ -49,7 +51,13 @@ export interface RenderMetadata {
     ms: number;
   };
   runtimeBatches?: ReturnType<typeof batchStaticMap>;
-  runtimeLoad?: { resourcesMs: number; materialsMs: number; totalMs: number };
+  runtimeLoad?: {
+    resourcesMs: number;
+    materialsMs: number;
+    totalMs: number;
+    manifestMs?: number;
+    sunMs?: number;
+  };
   runtimeDecode?: RenderDecodeTimings[];
 }
 
@@ -99,6 +107,7 @@ export function disposeRenderGroup(group: Group): void {
   const geometries = new Set<Mesh['geometry']>();
   const materials = new Set<Material>();
   const textures = new Set<Texture>();
+  if (group.userData.cs2SunTexture instanceof Texture) textures.add(group.userData.cs2SunTexture);
   const batches = new Set<BatchedMesh>();
   group.traverse((object) => {
     if (!(object instanceof Mesh)) return;
@@ -110,6 +119,8 @@ export function disposeRenderGroup(group: Group): void {
         if (value instanceof Texture) textures.add(value);
       for (const value of material.userData.cs2Textures ?? [])
         if (value instanceof Texture) textures.add(value);
+      if (material.userData.cs2Sun?.texture instanceof Texture)
+        textures.add(material.userData.cs2Sun.texture);
     }
   });
   const images = new Set<ImageBitmap>();
@@ -127,6 +138,7 @@ export function disposeRenderGroup(group: Group): void {
   for (const geometry of geometries) geometry.dispose();
   group.removeFromParent();
   group.clear();
+  delete group.userData.cs2SunTexture;
 }
 
 export async function loadRenderMap(
@@ -136,6 +148,7 @@ export async function loadRenderMap(
     signal?: AbortSignal;
     collisionFingerprint?: string;
     batch?: boolean;
+    sunShadows?: boolean;
   } = {},
 ): Promise<RenderMap> {
   const { clippingPlanes = [], onProgress, signal } = options;
@@ -147,6 +160,7 @@ export async function loadRenderMap(
       'Textured map unavailable. Run bun run cs2:prepare --render, then load textures again.',
     );
   const metadata: RenderMetadata = await response.json();
+  const manifestMs = performance.now() - started;
   if (metadata.schema !== 1 || metadata.map !== 'de_inferno' || !Array.isArray(metadata.chunks))
     throw Error('Unsupported textured-map package. Run bun run cs2:prepare --render again.');
   if (
@@ -226,14 +240,22 @@ export async function loadRenderMap(
   loader.setMeshoptDecoder(MeshoptDecoder);
   const dispose = () => disposeRenderGroup(group);
   const bounds = { geometryCount: 0, shrunkCount: 0, precomputedCount: 0, ms: 0 };
-  const timings = { resourcesMs: 0, materialsMs: 0, totalMs: 0 };
+  const timings = { resourcesMs: 0, materialsMs: 0, totalMs: 0, manifestMs, sunMs: 0 };
   const pendingMaterials = new Set<Material>();
+  let sun: SunLighting | undefined;
   try {
+    if (metadata.sunShadows && options.sunShadows !== false) {
+      const sunStarted = performance.now();
+      sun = await loadSunVisibility(metadata.sunShadows, version, signal);
+      timings.sunMs = performance.now() - sunStarted;
+      group.userData.cs2SunTexture = sun.texture;
+    }
     for (const [index, chunk] of metadata.chunks.entries()) {
       if (!/^render\/[a-zA-Z0-9_.-]+\.gltf$/.test(chunk))
         throw Error('Invalid private render chunk path');
       signal?.throwIfAborted();
       onProgress?.(`Loading render chunk ${index + 1}/${metadata.chunks.length}…`);
+      signal?.throwIfAborted();
       chunkUrl = new URL(`/local/${chunk}`, window.location.href).href;
       const resourcesStart = performance.now();
       const gltf = await loader.loadAsync(`/local/${chunk}`);
@@ -246,13 +268,22 @@ export async function loadRenderMap(
       gltf.scene.traverse((object) => {
         if (object instanceof Mesh) meshes.push(object);
       });
-      const converted = new Map<Material, Material>();
+      const converted = new Map<Material, Map<boolean, Material>>();
       const materialsStart = performance.now();
       const sources = new Set(
         meshes.flatMap((object) =>
           Array.isArray(object.material) ? object.material : [object.material],
         ),
       );
+      const modes = new Map<Material, Set<boolean>>();
+      for (const object of meshes)
+        for (const material of Array.isArray(object.material)
+          ? object.material
+          : [object.material]) {
+          const values = modes.get(material) ?? new Set<boolean>();
+          values.add(!!(hasSunBinding(object.geometry) && sun));
+          modes.set(material, values);
+        }
       let yieldAt = performance.now() + 8;
       for (const source of sources) {
         const settings = source.userData.cs2 as Cs2Material | undefined;
@@ -262,10 +293,19 @@ export async function loadRenderMap(
           ),
         );
         if (textures.some((texture) => !texture)) throw Error('Missing render layer texture');
-        const material = diffuseMaterial(source as MeshStandardMaterial, settings, textures);
-        pendingMaterials.add(material);
-        material.clippingPlanes = clippingPlanes;
-        converted.set(source, material);
+        const variants = new Map<boolean, Material>();
+        for (const lit of modes.get(source) ?? []) {
+          const material = diffuseMaterial(
+            source as MeshStandardMaterial,
+            settings,
+            textures,
+            lit ? sun : undefined,
+          );
+          pendingMaterials.add(material);
+          material.clippingPlanes = clippingPlanes;
+          variants.set(lit, material);
+        }
+        converted.set(source, variants);
         if (performance.now() >= yieldAt) {
           await yieldRenderTask();
           signal?.throwIfAborted();
@@ -291,12 +331,19 @@ export async function loadRenderMap(
         }
         const materials: Material[] = [];
         for (const source of Array.isArray(object.material) ? object.material : [object.material]) {
-          const material = converted.get(source);
+          const lightUv = object.geometry.getAttribute('_cs2_light_uv');
+          if (lightUv && sun) {
+            object.geometry.setAttribute('cs2LightUv', lightUv);
+            // Keep the original attribute until every object sharing this geometry is bound.
+          }
+          const material = converted.get(source)?.get(!!(sun && lightUv));
           const settings = source.userData.cs2 as Cs2Material | undefined;
           if (!material) throw Error('Missing converted render material');
           materials.push(material);
           if (settings?.layers.length) {
-            const blend = object.geometry.getAttribute('_texcoord_4');
+            const blend =
+              object.geometry.getAttribute('cs2Blend') ??
+              object.geometry.getAttribute('_texcoord_4');
             object.geometry.setAttribute(
               'cs2Blend',
               blend ??
@@ -315,6 +362,7 @@ export async function loadRenderMap(
           yieldAt = performance.now() + 8;
         }
       }
+      for (const geometry of bounded) geometry.deleteAttribute('_cs2_light_uv');
       for (const source of sources) source.dispose();
       pendingMaterials.clear();
       timings.materialsMs += performance.now() - materialsStart;

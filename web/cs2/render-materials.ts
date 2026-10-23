@@ -13,6 +13,7 @@ import {
   type Texture,
   ZeroFactor,
 } from 'three';
+import { patchSunVisibility, type SunLighting } from './render-sun';
 
 export interface UvSettings {
   scale: [number, number];
@@ -70,6 +71,7 @@ export function diffuseMaterial(
   source: MeshStandardMaterial,
   settings?: Cs2Material,
   layerTextures: Texture[] = [],
+  sun?: SunLighting,
 ): MeshLambertMaterial {
   const material = new MeshLambertMaterial({
     color: source.color,
@@ -88,6 +90,8 @@ export function diffuseMaterial(
     ...source.userData,
     cs2Textures: layerTextures,
     cs2TexturesEnabled: { value: 1 },
+    cs2Sun: sun,
+    cs2LightingMode: sun ? 'lightmap' : 'fallback',
   };
   const mode = settings?.blendMode ?? 0;
   if (mode >= 3) {
@@ -102,10 +106,12 @@ export function diffuseMaterial(
     material.polygonOffsetFactor = -1;
     material.polygonOffsetUnits = -1;
   }
-  if (!settings || !layerTextures.length) return material;
-  if (settings.layers.some((layer) => layer.uv.channel === 1)) material.defines = { USE_UV1: '' };
+  if (!sun && (!settings || !layerTextures.length)) return material;
+  if (settings?.layers.some((layer) => layer.uv.channel === 1)) material.defines = { USE_UV1: '' };
   for (const texture of layerTextures) texture.colorSpace = SRGBColorSpace;
-  material.onBeforeCompile = (shader) => {
+  material.onBeforeCompile = (shader, renderer) => {
+    if (sun) patchSunVisibility(shader, sun, renderer);
+    if (!settings || !layerTextures.length) return;
     shader.uniforms.cs2TexturesEnabled = material.userData.cs2TexturesEnabled;
     const layers = settings.layers.slice(0, layerTextures.length);
     shader.vertexShader = `attribute vec4 cs2Blend; varying vec4 vCs2Blend;\n${shader.vertexShader}`;
@@ -131,6 +137,6 @@ export function diffuseMaterial(
     );
   };
   material.customProgramCacheKey = () =>
-    `cs2-layers-${settings.layers.map((l) => l.uv.channel).join('-')}`;
+    `cs2-layers-${settings?.layers.map((l) => l.uv.channel).join('-') ?? ''}-sun-${!!sun}`;
   return material;
 }

@@ -27,6 +27,7 @@ interface Reply {
   total?: number;
   ms?: number;
   cancelled?: boolean;
+  workersUsed?: number;
   loadMs?: number;
   buildMs?: number;
   cached?: boolean;
@@ -243,7 +244,7 @@ export class Cs2Game implements GameAnalysis {
       return {
         cancelled: !!reply.cancelled,
         ms: reply.ms ?? 0,
-        summary: `${reply.cancelled ? 'Stopped' : 'Complete'} · ${stats.cells}/${stats.total} cells · ${stats.standing} standing + ${stats.crouching} crouching · ${((reply.ms ?? 0) / 1000).toFixed(2)} s · estimates only`,
+        summary: `${reply.cancelled ? 'Stopped' : 'Complete'} · ${stats.cells}/${stats.total} cells · ${stats.standing} standing + ${stats.crouching} crouching · ${reply.workersUsed ?? settings.workers} worker${(reply.workersUsed ?? settings.workers) === 1 ? '' : 's'} · ${((reply.ms ?? 0) / 1000).toFixed(2)} s · estimates only`,
       };
     } finally {
       this.scanProgress = undefined;

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>CS2 scan worker benchmark</title>
+  </head>
+  <body>
+    <h1>CS2 exact scan benchmark</h1>
+    <p>16 spacing · 2048 radius · default target pose · AWP</p>
+    <pre id="results"></pre>
+    <script type="module">
+    import { benchmarkScan } from './cs2-scan-benchmark.ts';
+
+    window.scanBenchmark = { reports: [], done: false };
+    const output = document.querySelector('#results');
+    window.runScanBenchmark = async (
+      counts = [1, 2, 4],
+      label = 'browser-current',
+      mode = 'current',
+    ) => {
+      window.scanBenchmark = { label, mode, reports: [], done: false };
+      output.textContent = '';
+      try {
+        for (const count of counts)
+          await benchmarkScan(
+            count,
+            (report) => {
+              window.scanBenchmark.reports.push(report);
+              output.textContent += `${JSON.stringify(report)}\n`;
+            },
+            `/benchmark-${mode}-worker.js`,
+          );
+        window.scanBenchmark.done = true;
+      } catch (error) {
+        window.scanBenchmark.error = String(error);
+      }
+      await fetch(`/benchmark-report?label=${encodeURIComponent(label)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(window.scanBenchmark),
+      });
+    };
+    </script>
+  </body>
+</html>

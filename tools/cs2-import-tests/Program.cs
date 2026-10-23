@@ -1,6 +1,13 @@
 using System.Numerics;
 
 var checks = 0;
+var sourceBlocks = Enumerable.Range(0, 64).Select(i => (byte)i).ToArray();
+var sunBlocks = RenderSunBlocks.ExtractRed(sourceBlocks);
+if (!sunBlocks.SequenceEqual(sourceBlocks[..8].Concat(sourceBlocks[16..24]).Concat(sourceBlocks[32..40]).Concat(sourceBlocks[48..56])))
+    throw new Exception("Sun BC4 must preserve red blocks and tile orientation exactly, excluding green");
+checks++;
+try { RenderSunBlocks.ExtractRed(new byte[17]); throw new Exception("Accepted truncated BC5"); }
+catch (InvalidDataException) { checks++; }
 void Near(Vector3 actual, Vector3 expected, string label) {
     if (!float.IsFinite(actual.X + actual.Y + actual.Z) || Vector3.Distance(actual, expected) > 1e-5f)
         throw new Exception($"{label}: {actual} != {expected}");
@@ -23,4 +30,4 @@ Near(RenderTint.Linear(RenderTint.Srgb(wood)), wood, "Texture color space round 
 if (RenderTint.Mask(0, 1, 1) != 0 || RenderTint.Mask(1, 1, 1) != 1 || RenderTint.Mask(0.5f, 2, 0.5f) != 0.25f)
     throw new Exception("Tint mask channel/contrast/brightness mismatch");
 checks++;
-Console.WriteLine($"Render tint tests: {checks} passed (no game files required).");
+Console.WriteLine($"Render tint/sun block tests: {checks} passed (no game files required).");

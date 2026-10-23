@@ -10,6 +10,9 @@ export function localCs2(packageRoot = local): Plugin {
     name: 'local-cs2-package',
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
+        // Immutable collision/BVH arrays are shared by the bounded CS2 scan pool.
+        res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+        res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
         const path = req.url?.split('?')[0];
         if (!path?.startsWith('/local/')) return next();
         let name: string;
@@ -20,7 +23,7 @@ export function localCs2(packageRoot = local): Plugin {
           res.end();
           return;
         }
-        const isRender = /^render\/[a-zA-Z0-9_.-]+\.(gltf|bin|png|webp)$/.test(name);
+        const isRender = /^render\/[a-zA-Z0-9_.-]+\.(gltf|bin|png|webp|bc4\.gz)$/.test(name);
         const file = resolve(packageRoot, name);
         if (
           (name !== 'map.json' &&

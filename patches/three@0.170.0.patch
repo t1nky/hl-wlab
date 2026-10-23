@@ -1,0 +1,39 @@
+diff --git a/build/three.cjs b/build/three.cjs
+index b67b423739c1dc204bd07f6d484817362e900d79..b35efc86b6a1cd4e7547f3acff19514ef596a491 100644
+--- a/build/three.cjs
++++ b/build/three.cjs
+@@ -26624,7 +26624,7 @@ function WebGLUtils( gl, extensions ) {
+ 
+ 			if ( extension !== null ) {
+ 
+-				if ( p === RGBA_BPTC_Format ) return extension.COMPRESSED_RED_RGTC1_EXT;
++				if ( p === RED_RGTC1_Format ) return extension.COMPRESSED_RED_RGTC1_EXT;
+ 				if ( p === SIGNED_RED_RGTC1_Format ) return extension.COMPRESSED_SIGNED_RED_RGTC1_EXT;
+ 				if ( p === RED_GREEN_RGTC2_Format ) return extension.COMPRESSED_RED_GREEN_RGTC2_EXT;
+ 				if ( p === SIGNED_RED_GREEN_RGTC2_Format ) return extension.COMPRESSED_SIGNED_RED_GREEN_RGTC2_EXT;
+diff --git a/build/three.module.js b/build/three.module.js
+index 6bc781491ae24ffd29ee22c8f019cdb67c2c61b7..28dec7f6bf68c502305827f5a5e74bc94624f987 100644
+--- a/build/three.module.js
++++ b/build/three.module.js
+@@ -26622,7 +26622,7 @@ function WebGLUtils( gl, extensions ) {
+ 
+ 			if ( extension !== null ) {
+ 
+-				if ( p === RGBA_BPTC_Format ) return extension.COMPRESSED_RED_RGTC1_EXT;
++				if ( p === RED_RGTC1_Format ) return extension.COMPRESSED_RED_RGTC1_EXT;
+ 				if ( p === SIGNED_RED_RGTC1_Format ) return extension.COMPRESSED_SIGNED_RED_RGTC1_EXT;
+ 				if ( p === RED_GREEN_RGTC2_Format ) return extension.COMPRESSED_RED_GREEN_RGTC2_EXT;
+ 				if ( p === SIGNED_RED_GREEN_RGTC2_Format ) return extension.COMPRESSED_SIGNED_RED_GREEN_RGTC2_EXT;
+diff --git a/src/renderers/webgl/WebGLUtils.js b/src/renderers/webgl/WebGLUtils.js
+index 239407e7dfdb3cf98b8927f8cac9d399a1441394..bda5222e0bdb0cf0174be004db7b674d02894455 100644
+--- a/src/renderers/webgl/WebGLUtils.js
++++ b/src/renderers/webgl/WebGLUtils.js
+@@ -183,7 +183,7 @@ function WebGLUtils( gl, extensions ) {
+ 
+ 			if ( extension !== null ) {
+ 
+-				if ( p === RGBA_BPTC_Format ) return extension.COMPRESSED_RED_RGTC1_EXT;
++				if ( p === RED_RGTC1_Format ) return extension.COMPRESSED_RED_RGTC1_EXT;
+ 				if ( p === SIGNED_RED_RGTC1_Format ) return extension.COMPRESSED_SIGNED_RED_RGTC1_EXT;
+ 				if ( p === RED_GREEN_RGTC2_Format ) return extension.COMPRESSED_RED_GREEN_RGTC2_EXT;
+ 				if ( p === SIGNED_RED_GREEN_RGTC2_Format ) return extension.COMPRESSED_SIGNED_RED_GREEN_RGTC2_EXT;

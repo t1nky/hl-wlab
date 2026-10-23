@@ -32,6 +32,8 @@ test('private CS2 route serves WebP and PNG, revalidates, and restricts asset pa
     const base = `http://127.0.0.1:${(server.httpServer.address() as AddressInfo).port}`;
     const response = await fetch(`${base}/local/render/fixture.webp`);
     assert.equal(response.status, 200);
+    assert.equal(response.headers.get('cross-origin-opener-policy'), 'same-origin');
+    assert.equal(response.headers.get('cross-origin-embedder-policy'), 'require-corp');
     assert.equal(response.headers.get('content-type'), 'image/webp');
     assert.equal(response.headers.get('cache-control'), 'private, no-cache');
     assert.equal(response.headers.get('content-length'), String(webp.byteLength));

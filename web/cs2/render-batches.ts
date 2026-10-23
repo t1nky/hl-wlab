@@ -56,6 +56,8 @@ function* prepareStaticMap(group: Group) {
       depth: [material.depthTest, material.depthWrite, material.depthFunc, material.colorWrite],
       blending: [material.blending, material.blendSrc, material.blendDst, material.blendEquation],
       shader: material.customProgramCacheKey(),
+      sun: material.userData.cs2Sun?.texture.uuid,
+      lightingMode: material.userData.cs2LightingMode,
       clipping: material.clippingPlanes?.map((p) => [...p.normal.toArray(), p.constant]),
       shadows: [object.castShadow, object.receiveShadow],
       renderOrder: object.renderOrder,
@@ -104,6 +106,7 @@ function* prepareStaticMap(group: Group) {
         batch.userData.sources[id] = {
           mesh: object.name,
           material: (object.material as MeshLambertMaterial).userData.sourceMaterial,
+          lighting: object.geometry.userData.cs2Lighting,
         };
         oldGeometries.add(object.geometry);
         oldMaterials.add(object.material as MeshLambertMaterial);

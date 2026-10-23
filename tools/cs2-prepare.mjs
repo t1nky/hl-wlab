@@ -156,6 +156,7 @@ async function compressRenderPackage() {
     renameSync(`${gltfPath}.tmp`, gltfPath);
   }
   const files = new Set(metadata.chunks);
+  if (metadata.sunShadows) files.add(metadata.sunShadows.file);
   for (const chunk of metadata.chunks) {
     const gltf = JSON.parse(readFileSync(resolve(output, chunk), 'utf8'));
     for (const buffer of gltf.buffers) if (buffer.uri) files.add(`render/${buffer.uri}`);
