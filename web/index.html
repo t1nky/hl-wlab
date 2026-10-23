@@ -28,13 +28,7 @@
               <option value="cs2">CS2 · experimental</option>
             </select></label
           >
-          <div data-game-only="cs2">
-            <p class="dim">
-              Local Inferno package. Prepare once with <code>bun run cs2:prepare --render</code>,
-              then switch to CS2 here.
-            </p>
-          </div>
-          <div data-game-only="goldsrc">
+          <div>
             <button type="button" id="gameFolder" class="primary">Choose Half-Life folder</button>
             <input id="gameDirectory" type="file" webkitdirectory multiple hidden>
             <p id="libraryStatus" class="dim" role="status">
@@ -79,7 +73,7 @@
             </div>
             <p id="bookmarkStatus" class="dim" role="status">Saved only in this browser.</p>
           </details>
-          <details data-game-only="goldsrc">
+          <details>
             <summary>Import / export files</summary>
             <label>BSP map<input id="mapFile" type="file" accept=".bsp"></label
             ><label>Player model<input id="modelFile" type="file" accept=".mdl"></label
@@ -96,23 +90,20 @@
           </details>
         </section>
         <section>
-          <div data-game-only="cs2">
-            <p class="dim">
-              Stationary target point; no player pose, hitgroup or armor. Walk + E places the point
-              at eye height.
-            </p>
+          <div>
+            <p id="targetNote" class="dim"></p>
             <p class="dim">Shot source (eye coordinates)</p>
             <div class="three">
-              <label>X<input id="cs2SourceX" type="number" step="0.01"></label>
-              <label>Y<input id="cs2SourceY" type="number" step="0.01"></label>
-              <label>Z<input id="cs2SourceZ" type="number" step="0.01"></label>
+              <label>X<input id="sourceX" type="number" step="0.01"></label>
+              <label>Y<input id="sourceY" type="number" step="0.01"></label>
+              <label>Z<input id="sourceZ" type="number" step="0.01"></label>
             </div>
             <div class="buttons">
-              <button type="button" id="cs2SourceCamera">Source at camera</button
-              ><button type="button" id="cs2TargetCamera">Target at camera</button>
+              <button type="button" id="sourceCamera">Source at camera</button
+              ><button type="button" id="targetCamera">Target at camera</button>
             </div>
-            <button type="button" id="cs2Trace">Trace AWP</button>
-            <p id="cs2Shot" class="dim" role="status"></p>
+            <button type="button" id="traceShot">Trace shot</button>
+            <p id="shotDetails" class="dim" role="status"></p>
           </div>
           <label
             title="Choose one aim point, or let Best damage choose the strongest shot at each position."
@@ -152,9 +143,19 @@
               ><label>Pitch °<input id="pitch" type="number" value="0" min="-89" max="89"></label>
             </div>
             <label
-              >Sequence (frame 0)<select id="sequence">
+              >Animation / pose<select id="sequence">
                 <option value="1">Standing idle</option>
               </select></label
+            >
+            <label
+              >Frozen frame<input
+                id="poseFrame"
+                type="number"
+                min="0"
+                max="0"
+                value="0"
+                step="1"
+              ></label
             >
             <div class="two">
               <label

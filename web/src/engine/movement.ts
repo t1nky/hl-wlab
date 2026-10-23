@@ -11,6 +11,9 @@ export interface Input {
 const dot = (a: number[], b: number[]) => a.reduce((s, x, i) => s + x * b[i], 0),
   add = (a: number[], b: number[], k = 1) => a.map((x, i) => x + b[i] * k);
 export class Walker {
+  get origin() {
+    return this.p;
+  }
   engine: Engine;
   p: number[];
   v: number[];

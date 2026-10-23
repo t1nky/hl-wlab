@@ -26,6 +26,7 @@ const int schema = 1;
 var csgo = Path.Combine(game, "game", "csgo");
 var mapPath = Path.Combine(csgo, "maps", map + ".vpk");
 var steamInf = File.ReadAllText(Path.Combine(csgo, "steam.inf"));
+if (args.Contains("--player")) { PlayerExport.Prepare(game, output, args.Contains("--force")); return; }
 var sources = new[] { mapPath }.Concat(new[] { csgo, Path.Combine(game, "game", "core") }
     .SelectMany(d => Directory.EnumerateFiles(d, "pak*.vpk"))).Order().Select(p =>
     {

@@ -4,14 +4,16 @@ function element<T extends HTMLElement>(id: string, type: { new (): T }): T {
   return node;
 }
 const elements = {
+  targetNote: element('targetNote', HTMLElement),
+  poseFrame: element('poseFrame', HTMLInputElement),
   gameMode: element('gameMode', HTMLSelectElement),
-  cs2SourceX: element('cs2SourceX', HTMLInputElement),
-  cs2SourceY: element('cs2SourceY', HTMLInputElement),
-  cs2SourceZ: element('cs2SourceZ', HTMLInputElement),
-  cs2SourceCamera: element('cs2SourceCamera', HTMLButtonElement),
-  cs2TargetCamera: element('cs2TargetCamera', HTMLButtonElement),
-  cs2Trace: element('cs2Trace', HTMLButtonElement),
-  cs2Shot: element('cs2Shot', HTMLElement),
+  sourceX: element('sourceX', HTMLInputElement),
+  sourceY: element('sourceY', HTMLInputElement),
+  sourceZ: element('sourceZ', HTMLInputElement),
+  sourceCamera: element('sourceCamera', HTMLButtonElement),
+  targetCamera: element('targetCamera', HTMLButtonElement),
+  traceShot: element('traceShot', HTMLButtonElement),
+  shotDetails: element('shotDetails', HTMLElement),
   gameFolder: element('gameFolder', HTMLButtonElement),
   gameDirectory: element('gameDirectory', HTMLInputElement),
   libraryMap: element('libraryMap', HTMLSelectElement),

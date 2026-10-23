@@ -1,7 +1,7 @@
 import type { Bone, PoseOptions, Sequence } from './types.ts';
 
 type LocalPose = { p: number[]; q: number[] };
-// IDST v10, fixed animation frame zero. Uses real imported MDL hitboxes and
+// IDST v10, frozen selected animation frame. Uses real imported MDL hitboxes and
 // bone animations; no capsule or generic human hitbox substitutes.
 const F = Math.fround;
 function multiply(a: number[], b: number[]) {
@@ -137,6 +137,9 @@ export function readStudio(buffer: ArrayBuffer) {
     options: PoseOptions = {},
   ) {
     const seq = sequences[sequence];
+    const frame = options.frame ?? 0;
+    if (!Number.isInteger(frame) || frame < 0 || frame >= (seq?.frames ?? 0))
+      throw Error('Choose an available animation frame');
     if (seq?.group !== 0 || ![1, 2, 9].includes(seq.blends))
       throw Error('This prototype supports embedded sequences with one, two, or nine blends');
     let blend = 0,
@@ -172,10 +175,21 @@ export function readStudio(buffer: ArrayBuffer) {
       const p = sequence.anim + (bl * nb + b) * 12,
         off = w(p + k * 2);
       if (!off) return 0;
-      const value = p + off;
-      check(value, 4);
-      if (!u[value + 1] || u[value] > u[value + 1]) throw Error('Invalid MDL animation span');
-      return s(value + 2);
+      let value = p + off,
+        remaining = frame % sequence.frames;
+      while (true) {
+        check(value, 4);
+        const valid = u[value],
+          total = u[value + 1];
+        if (!total || !valid || valid > total) throw Error('Invalid MDL animation span');
+        if (remaining < total) {
+          const sample = Math.min(remaining, valid - 1);
+          check(value + 2 + sample * 2, 2);
+          return s(value + 2 + sample * 2);
+        }
+        remaining -= total;
+        value += 2 + valid * 2;
+      }
     }
     function localPose(b: Bone, j: number, bl: number, sequence: Sequence = seq) {
       const vals = b.value.map((v, k) =>

@@ -56,10 +56,10 @@ export class WalkController {
     this.snapGround(2);
     return this.state;
   }
-  start(eye: V3): { state: WalkState; placement: string } {
+  start(eye: V3, crouched = false): { state: WalkState; placement: string } {
     if (!eye.every(Number.isFinite)) throw Error('Walk coordinates must be finite');
     const candidates: { foot: V3; label: string }[] = [
-      { foot: [eye[0], eye[1], eye[2] - 64], label: 'source' },
+      { foot: [eye[0], eye[1], eye[2] - (crouched ? 46 : 64)], label: 'source' },
       ...this.map.metadata.spawns.map((spawn) => ({ foot: spawn.origin, label: spawn.classname })),
     ];
     for (const candidate of candidates) {
@@ -71,8 +71,8 @@ export class WalkController {
       );
       if (!floor || floor.normal[2] < 0.7 || floor.point[2] < candidate.foot[2] - 256) continue;
       const foot: V3 = [floor.point[0], floor.point[1], floor.point[2] + SKIN];
-      if (!this.map.playerFits(foot, STAND, true)) continue;
-      return { state: this.teleport(foot), placement: candidate.label };
+      if (!this.map.playerFits(foot, crouched ? CROUCH : STAND, true)) continue;
+      return { state: this.teleport(foot, crouched), placement: candidate.label };
     }
     throw Error('No clear standing floor near source or map spawns; choose another source');
   }

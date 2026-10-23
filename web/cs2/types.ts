@@ -1,8 +1,7 @@
-export type V3 = [number, number, number];
-export function required<T>(value: T | null | undefined): T {
-  if (value == null) throw Error('Missing required collision/worker data');
-  return value;
-}
+import type { V3 } from '../src/engine/types';
+
+export type { V3 } from '../src/engine/types';
+export { required } from '../src/engine/types';
 export interface Surface {
   name: string;
   hash: number;

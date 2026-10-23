@@ -2,6 +2,11 @@ import type { LibraryMapRef } from '../storage/library-types.ts';
 import type { WeaponID } from './weapons.ts';
 /** Dense numeric buffers keep the WASM boundary allocation-free per sample. */
 export type Vector = number[];
+export type V3 = [number, number, number];
+export function required<T>(value: T | null | undefined): T {
+  if (value == null) throw Error('Missing required analysis data');
+  return value;
+}
 export interface Transform {
   origin: Vector;
   angles: Vector;
@@ -56,6 +61,7 @@ export interface Sequence {
   group: number;
 }
 export interface PoseOptions {
+  frame?: number;
   yawBlend?: number;
   pitchBlend?: number;
   gait?: number;

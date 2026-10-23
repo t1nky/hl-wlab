@@ -1,16 +1,18 @@
-import { Vector3 } from 'three';
 import { MeshBVH, type SerializedBVH } from 'three-mesh-bvh';
+import type { ScanSettings } from '../src/games/contracts';
+import type { TargetPose } from '../src/games/target';
 import { CollisionMap } from './collision';
 import { WalkController, type WalkInput } from './movement';
+import { CS2_ROW, type ScanStats, scanMap } from './scan';
 import { decodeMap, type Metadata, type V3 } from './types';
 
 type Request = { id: number } & (
   | { op: 'load'; includeBuffer?: boolean }
   | { op: 'trace'; source: V3; target: V3 }
   | { op: 'pick'; source: V3; direction: V3; maxZ: number }
-  | { op: 'scan'; target: V3 }
+  | { op: 'scan'; target: V3; settings?: ScanSettings; pose?: TargetPose }
   | { op: 'cancel' }
-  | { op: 'walk-start'; eye: V3 }
+  | { op: 'walk-start'; eye: V3; crouched?: boolean }
   | { op: 'walk-reset' }
   | { op: 'walk-step'; dt: number; input: WalkInput; yaw: number }
 );
@@ -116,43 +118,41 @@ async function load(id: number, includeBuffer = true) {
     render ? [render] : [],
   );
 }
-async function scan(id: number, target: V3) {
+async function scan(id: number, target: V3, settings?: ScanSettings, pose?: TargetPose) {
   if (scanning) throw Error('A scan is already running');
   scanning = true;
   cancelled = false;
   const start = performance.now();
-  const points: { source: V3; damage: number | null; status: string }[] = [];
-  let tested = 0;
   try {
-    for (let y = -12; y <= 12 && !cancelled; y++) {
-      for (let x = -12; x <= 12 && !cancelled; x++) {
-        tested++;
-        const ground = map.pick(
-          [target[0] + x * 64, target[1] + y * 64, target[2] + 128],
-          [0, 0, -1],
-          'player',
-        );
-        if (!ground || ground.normal[2] < 0.7 || ground.point[2] < target[2] - 256) continue;
-        const foot = ground.point as V3;
-        const support = [
-          [-15, -15],
-          [15, -15],
-          [-15, 15],
-          [15, 15],
-        ].every(([dx, dy]) => {
-          const hit = map.pick([foot[0] + dx, foot[1] + dy, foot[2] + 3], [0, 0, -1], 'player');
-          return hit && hit.normal[2] > 0.7 && Math.abs(hit.point[2] - foot[2]) < 2;
+    const result = await scanMap(
+      map,
+      { target, settings: settings ?? { spacing: 64, radius: 768, workers: 1 }, pose },
+      (stats: ScanStats) =>
+        send(id, { kind: 'progress', tested: stats.cells, total: stats.total, stats }),
+      () => cancelled,
+    );
+    // Compatibility for the isolated diagnostic page; the shared UI uses compact typed rows.
+    const points = pose
+      ? undefined
+      : Array.from({ length: result.rows.length / CS2_ROW }, (_, i) => {
+          const r = result.rows.subarray(i * CS2_ROW, (i + 1) * CS2_ROW);
+          return {
+            source: [r[1], r[2], r[4]],
+            damage: r[5] < 0 ? null : r[5],
+            status: ['clear', 'estimated-penetration', 'blocked', 'indeterminate'][r[6]],
+          };
         });
-        if (!support || !map.standable(foot)) continue;
-        const source: V3 = [foot[0], foot[1], foot[2] + 64];
-        if (new Vector3(...source).distanceTo(new Vector3(...target)) < 1) continue;
-        const result = map.trace(source, target);
-        points.push({ source, damage: result.damage, status: result.status });
-      }
-      send(id, { kind: 'progress', tested, total: 625 });
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-    send(id, { kind: 'scan', points, tested, cancelled, ms: performance.now() - start });
+    scope.postMessage(
+      {
+        id,
+        kind: 'scan',
+        ...result,
+        points,
+        tested: result.stats.cells,
+        ms: performance.now() - start,
+      },
+      [result.rows.buffer],
+    );
   } finally {
     scanning = false;
   }
@@ -173,7 +173,7 @@ scope.onmessage = async ({ data }) => {
         });
         break;
       case 'scan':
-        await scan(data.id, data.target);
+        await scan(data.id, data.target, data.settings, data.pose);
         break;
       case 'cancel':
         cancelled = true;
@@ -181,7 +181,7 @@ scope.onmessage = async ({ data }) => {
         break;
       case 'walk-start': {
         const start = performance.now();
-        const result = walker.start(data.eye);
+        const result = walker.start(data.eye, data.crouched);
         walkEye = data.eye;
         send(data.id, { kind: 'walk', ...result, ms: performance.now() - start });
         break;

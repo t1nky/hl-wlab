@@ -139,6 +139,7 @@ if (import.meta.main) {
       output,
       ...(process.argv.includes('--force') ? ['--force'] : []),
       ...(process.argv.includes('--render') ? ['--render'] : []),
+      ...(process.argv.includes('--player') ? ['--player'] : []),
     ],
     { cwd: root, stdio: 'inherit' },
   );

@@ -23,7 +23,11 @@ export function localCs2(): Plugin {
         const isRender = /^render\/[a-zA-Z0-9_.-]+\.(gltf|bin|png)$/.test(name);
         const file = resolve(local, name);
         if (
-          (name !== 'map.json' && name !== 'map.cs2map' && name !== 'render.json' && !isRender) ||
+          (name !== 'map.json' &&
+            name !== 'map.cs2map' &&
+            name !== 'render.json' &&
+            name !== 'player.json' &&
+            !isRender) ||
           !file.startsWith(resolve(local) + sep)
         ) {
           res.statusCode = 404;

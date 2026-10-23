@@ -15,6 +15,7 @@ export function initializeLibrary(load: (library: LibraryMapRef) => Promise<void
     sceneBusy = false,
     importing = false;
   let worker: Worker | null = null;
+  let prepared: { name: string; note: string } | undefined;
   const status = (text: string) => {
     $('libraryStatus').textContent = text;
   };
@@ -22,13 +23,14 @@ export function initializeLibrary(load: (library: LibraryMapRef) => Promise<void
     if (!working && !sceneBusy) $('gameDirectory').click();
   };
   function sync() {
-    $('gameFolder').disabled = working || sceneBusy;
-    $('libraryMap').disabled = working || sceneBusy || !catalog?.maps.length;
-    $('libraryLoad').disabled = working || sceneBusy || !$('libraryMap').value;
+    $('gameFolder').disabled = working || sceneBusy || !!prepared;
+    $('libraryMap').disabled = working || sceneBusy || !!prepared || !catalog?.maps.length;
+    $('libraryLoad').disabled = working || sceneBusy || !!prepared || !$('libraryMap').value;
     $('libraryCancel').hidden = !importing;
   }
   function showCatalog(next: LibraryCatalog) {
     catalog = next;
+    if (prepared) return;
     $('libraryMap').replaceChildren(
       ...next.maps.map((map) => {
         const option = document.createElement('option');
@@ -127,6 +129,22 @@ export function initializeLibrary(load: (library: LibraryMapRef) => Promise<void
     })
     .catch((e) => status(errorMessage(e)));
   return {
+    setPrepared(value: { name: string; note: string } | undefined) {
+      prepared = value;
+      if (value) {
+        const option = document.createElement('option');
+        option.value = value.name;
+        option.textContent = value.name;
+        $('libraryMap').replaceChildren(option);
+        status(value.note);
+        $('libraryDetails').hidden = true;
+      } else if (catalog) showCatalog(catalog);
+      else {
+        $('libraryMap').replaceChildren(new Option('No imported maps', ''));
+        status('Select Half-Life or cstrike. Files stay on this device.');
+      }
+      sync();
+    },
     setBusy(value: boolean) {
       sceneBusy = value;
       sync();

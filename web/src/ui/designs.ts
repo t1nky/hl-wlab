@@ -108,7 +108,6 @@ export const design = {
     const [maps, target, scan] = sections;
     const bookmarkDetails = required<HTMLDetailsElement>('aside details:has(#bookmarkName)');
     const bookmarks = node('section');
-    bookmarks.dataset.gameOnly = 'goldsrc';
     bookmarkDetails.querySelector('summary')?.remove();
     bookmarks.append(...Array.from(bookmarkDetails.childNodes));
     bookmarkDetails.remove();

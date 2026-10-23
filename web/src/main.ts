@@ -1,15 +1,5 @@
 import type { Engine } from './engine/engine.ts';
-import type {
-  Assets,
-  Brush,
-  BSP,
-  Pose,
-  Progress,
-  ScanRequest,
-  ScanResponse,
-  Skybox,
-  Target,
-} from './engine/types.ts';
+import type { Assets, Brush, BSP, Pose, Progress, Skybox, Target } from './engine/types.ts';
 import { createPointMaterial } from './render/points.ts';
 import type { BookmarkState } from './storage/bookmarks.ts';
 import { assetRecord, hydrateMapTextures, loadLibraryAssets } from './storage/game-library.ts';
@@ -29,36 +19,43 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { V3 } from '../cs2/types';
 import { aimAnchor, isAimPoint } from './engine/aims.ts';
-import { readBSP, transform } from './engine/bsp.ts';
+import { readBSP } from './engine/bsp.ts';
 import { damage, makeEngine } from './engine/engine.ts';
 import { Walker } from './engine/movement.ts';
-import { capturePlacement, findWalkStart, postureSequence } from './engine/placement.ts';
-import { bestShot, classify, countVisible, ROW } from './engine/results.ts';
+import { findWalkStart, postureSequence } from './engine/placement.ts';
+import { bestShot, countVisible, ROW } from './engine/results.ts';
 import { readStudio } from './engine/studio.ts';
+import { CS2, type GameAnalysis, GOLDSRC, type TargetInput, validateScan } from './games/contracts';
 import type { Cs2Game } from './games/cs2';
+import { GoldsrcAnalysis } from './games/goldsrc';
+import { targetLines } from './games/target';
 import { buildMapMeshes } from './render/map.ts';
 import { buildSkybox, importSkyFiles, skyName } from './render/skybox.ts';
 import { get, hash, put } from './storage/cache.ts';
-import { gameUI } from './ui/game-mode';
+import { gameUI, poseUI, syncPoseFrame } from './ui/game-mode';
 
 type Mode = 'orbit' | 'walk' | 'fly';
 let cs2: Cs2Game | undefined;
 let modeRevision = 0;
+const goldsrc = new GoldsrcAnalysis(() => ({
+  engine,
+  model,
+  bsp,
+  assets: assetSet,
+  modelHash,
+  weapon: selectedWeaponID(),
+}));
+const analysis = (): GameAnalysis => cs2 ?? goldsrc;
+const damageView = () => ({
+  armor: number('armor'),
+  armorValue: number('armorValue'),
+  armorRatio: selectedWeapon().armorRatio,
+  aimPoint: selectedAimPoint(),
+});
 const hasMap = () => !!cs2?.render || (!cs2 && !!engine);
 const activeWalker = () => cs2?.walker ?? walker;
 
 const canvas = $('canvas');
-const HITGROUPS = [
-  'generic',
-  'head',
-  'chest',
-  'stomach',
-  'left arm',
-  'right arm',
-  'left leg',
-  'right leg',
-  'shield',
-];
 const HINTS = {
   orbit:
     'Drag orbit · Middle/right-drag pan · Scroll zoom · Click a result to inspect · F frame target',
@@ -99,7 +96,8 @@ orbit.mouseButtons.MIDDLE = THREE.MOUSE.PAN;
 orbit.zoomToCursor = true;
 const mapGroup = new THREE.Group(),
   targetGroup = new THREE.Group();
-scene.add(mapGroup, targetGroup);
+const inspectionGroup = new THREE.Group();
+scene.add(mapGroup, targetGroup, inspectionGroup);
 let skyTexture: THREE.CubeTexture | null = null,
   skyRevision = 0;
 let bsp: BSP,
@@ -109,8 +107,8 @@ let bsp: BSP,
   assetSet: Assets = {},
   modelHash = '',
   rows: Float32Array = new Float32Array(),
-  hp = new Float32Array(),
-  kind = new Float32Array(),
+  hp: Float32Array = new Float32Array(),
+  kind: Float32Array = new Float32Array(),
   shown = new Uint8Array(),
   shownCount = 0,
   selection: number | null = null,
@@ -129,12 +127,10 @@ let bsp: BSP,
   acc = 0,
   keys = new Set<string>(),
   drag: { x: number; y: number } | null = null,
-  worker: Worker | null = null,
   busy = false,
   focusScanAfterStop = false,
   loadingScene = true,
   revision = 0,
-  scanRevision = 0,
   errorCount = 0;
 const bookmarks = initializeBookmarks({ capture: captureBookmark, restore: restoreBookmark });
 const library = initializeLibrary(loadImportedMap);
@@ -289,6 +285,7 @@ function targetSettings() {
       yawBlend: number('yawBlend'),
       pitchBlend: number('pitchBlend'),
       gait: number('gait'),
+      frame: number('poseFrame'),
     };
   if (![...p, yaw, pitch, ...Object.values(options)].every(Number.isFinite))
     throw Error('Target values must be finite numbers');
@@ -299,6 +296,9 @@ function targetSettings() {
     !Number.isInteger(seq) ||
     seq < 0 ||
     seq >= model.sequences.length ||
+    !Number.isInteger(options.frame) ||
+    options.frame < 0 ||
+    options.frame >= model.sequences[seq].frames ||
     !Number.isFinite(number('expansion')) ||
     number('expansion') < 0 ||
     number('expansion') > 4
@@ -314,54 +314,52 @@ function targetSettings() {
   return { p: p.map(Math.fround), yaw, pitch, seq, options };
 }
 function updateTarget(invalidate = true) {
-  if (cs2) {
-    const point = (['tx', 'ty', 'tz'] as const).map(number);
-    if (!point.every(Number.isFinite)) {
-      error(Error('Target coordinates must be finite'));
-      return false;
-    }
-    cs2.target = point as V3;
-    targetMarker.position.fromArray(point);
-    targetMarker.visible = true;
-    cs2.clearShot();
-    $('cs2Shot').textContent = 'Target changed. Trace AWP to update.';
-    if (invalidate) invalidateScan('Target changed. Scan to update.');
-    schedule();
-    return true;
-  }
-  if (!model || !engine) return;
+  if (!hasMap()) return;
   try {
-    const t = targetSettings();
-    $('targetPosture').value = String(model.sequences[t.seq].name.startsWith('crouch') ? '1' : '0');
-    pose = model.pose(t.seq, t.p, t.yaw, -t.pitch / 3, true, t.options);
-    engine.target(pose, number('expansion'));
+    syncPoseFrame(analysis().poseChoices);
+    if (!cs2) targetSettings();
+    const input: TargetInput = {
+      p: (['tx', 'ty', 'tz'] as const).map(number) as V3,
+      yaw: number('yaw'),
+      pitch: number('pitch'),
+      seq: number('sequence'),
+      frame: number('poseFrame'),
+      yawBlend: number('yawBlend'),
+      pitchBlend: number('pitchBlend'),
+      gait: number('gait'),
+      expansion: number('expansion'),
+    };
+    if (
+      ![
+        ...input.p,
+        input.yaw,
+        input.pitch,
+        input.yawBlend,
+        input.pitchBlend,
+        input.gait,
+        input.expansion,
+      ].every(Number.isFinite)
+    )
+      throw Error('Target values must be finite');
+    const visual = analysis().setTarget(input);
+    if (!cs2 && goldsrc.nativePose) pose = goldsrc.nativePose;
+    $('targetPosture').value = String(
+      analysis().poseChoices.find((c) => c.index === input.seq)?.crouched ? 1 : 0,
+    );
     disposeGroup(targetGroup);
-    const lines = [];
-    for (const box of pose.boxes) {
-      if (box.group === 8) continue;
-      const corners = Array.from({ length: 8 }, (_, i) =>
-        transform(box.matrix, [
-          i & 1 ? box.maxs[0] : box.mins[0],
-          i & 2 ? box.maxs[1] : box.mins[1],
-          i & 4 ? box.maxs[2] : box.mins[2],
-        ]),
-      );
-      for (let i = 0; i < 8; i++)
-        for (const j of [1, 2, 4]) if (!(i & j)) lines.push(...corners[i], ...corners[i | j]);
-    }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(lines, 3));
     targetGroup.add(
       new THREE.LineSegments(
-        g,
+        new THREE.BufferGeometry().setAttribute(
+          'position',
+          new THREE.BufferAttribute(targetLines(visual), 3),
+        ),
         new THREE.LineBasicMaterial({ color: cssValue('target'), depthTest: false }),
       ),
     );
     syncAimMarker();
     syncSelectors();
-    if (invalidate) {
-      invalidateScan('Target changed. Scan to update.');
-    }
+    $('shotDetails').textContent = 'Target changed. Trace shot to update.';
+    if (invalidate) invalidateScan('Target changed. Scan to update.');
     schedule();
     return true;
   } catch (e) {
@@ -375,13 +373,9 @@ function selectedAimPoint() {
   return point;
 }
 function syncAimMarker(anchor = aimAnchor(selectedAimPoint()) ?? 1) {
-  if (cs2) {
-    targetMarker.position.fromArray(cs2.target);
-    targetMarker.visible = true;
-    return;
-  }
-  if (!pose) return;
-  targetMarker.position.fromArray(pose.aims[anchor]);
+  const visual = analysis().targetPose;
+  if (!visual) return;
+  targetMarker.position.fromArray(visual.aims[anchor]);
   targetMarker.visible = true;
 }
 const shotAt = (row: Float32Array) =>
@@ -394,18 +388,11 @@ const shotAt = (row: Float32Array) =>
   );
 // Rows are classified once per scan or armor change; filters afterwards only touch uniforms and typed arrays.
 function updatePoints(preserveSelection = false) {
+  if (!cs2) goldsrc.rows = rows;
   const previous = preserveSelection ? selection : null;
   clearSelection();
-  design.results(cs2 ? cs2.points.length : rows.length / ROW);
-  const c = cs2
-      ? cs2.classified()
-      : classify(
-          rows,
-          number('armor'),
-          number('armorValue'),
-          selectedWeapon().armorRatio,
-          selectedAimPoint(),
-        ),
+  design.results(analysis().count);
+  const c = analysis().classify(damageView()),
     g = new THREE.BufferGeometry();
   hp = c.hp;
   kind = c.kind;
@@ -441,7 +428,8 @@ function filterPoints() {
   (['countStanding', 'countCrouching'] as const).forEach((id, i) => {
     $(id).textContent = fmt(stanceCounts[i]);
   });
-  $('minDamageValue').textContent = `${minDamage} HP`;
+  $('minDamageValue').textContent = `${minDamage} ${analysis().definition.damageUnit}`;
+  $('minDamageValue').closest('label')?.setAttribute('title', analysis().definition.scan.note);
   updateFilterStatus();
   design.filtered(visible, kind.length);
   if (selection !== null && !shown[selection]) clearSelection();
@@ -457,7 +445,7 @@ function syncArmor() {
   $('armorValue').disabled = $('armor').value === '0';
 }
 function focus() {
-  if (!cs2 && !pose) return;
+  if (!analysis().targetPose) return;
   setMode('orbit');
   const offset = camera.position.clone().sub(orbit.target);
   if (offset.lengthSq() < 1) offset.set(-1250, -1300, 1450);
@@ -534,6 +522,7 @@ async function loadAssets(next: Assets, remember = true) {
   }
   revision++;
   rows = new Float32Array();
+  goldsrc.clearSamples();
   if (merged.snapshot) applySnapshot(merged.snapshot);
   else renderMap();
   $('cut').min = String(Math.floor(bsp.world.mins[2]) - 1);
@@ -725,8 +714,9 @@ function applySnapshot(text: string) {
       $('yaw').value = String(t.yaw);
       $('pitch').value = String(t.pitch);
       $('sequence').value = String(t.seq);
+      $('poseFrame').value = String(t.options?.frame ?? 0);
       for (const [k, v] of Object.entries(t.options || {}))
-        control(k as ElementID).value = String(v);
+        control(k === 'frame' ? 'poseFrame' : (k as ElementID)).value = String(v);
     }
     if (data.brushes) {
       if (data.brushes.length !== bsp.brushes.length)
@@ -772,10 +762,16 @@ function setMode(next: Mode, fromSelection = false) {
     const token = ++modeRevision;
     const source =
       fromSelection && selection !== null
-        ? game.points[selection].source
+        ? game.selection(selection, damageView()).eye
         : (camera.position.toArray() as V3);
     void game
-      .startWalk(source, !fromSelection && previous !== 'fly')
+      .startWalk(
+        source,
+        !fromSelection && previous !== 'fly',
+        fromSelection && selection !== null
+          ? game.selection(selection, damageView()).crouched
+          : false,
+      )
       .then((state) => {
         if (cs2 !== game || modeRevision !== token) return;
         camera.position.fromArray(state.eye);
@@ -876,7 +872,7 @@ function look() {
 }
 function clearSelection() {
   shotRevision++;
-  cs2?.clearShot();
+  disposeGroup(inspectionGroup);
   design.selected(false);
   selection = null;
   selectionMarker.visible = false;
@@ -893,46 +889,17 @@ function clearSelection() {
   schedule();
 }
 function selectPoint(i: number) {
-  if (cs2) {
-    const game = cs2;
-    const point = game.points[i];
-    if (!point) return;
-    clearSelection();
-    selection = i;
-    selectionMarker.position.fromArray(pointCloud.geometry.attributes.position.array, i * 3);
-    selectionMarker.visible = true;
-    $('standHere').hidden = false;
-    design.selected(true);
-    void traceCs2(point.source, i);
-    schedule();
-    return;
-  }
-  const r = rows.subarray(i * ROW, (i + 1) * ROW),
-    best = shotAt(r),
-    eye = [r[2], r[3], r[5]],
-    aim = pose.aims[best.anchor];
+  if (i < 0 || i >= analysis().count) return;
+  const sample = analysis().selection(i, damageView());
   clearSelection();
   selection = i;
-  syncAimMarker(best.anchor);
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute([...eye, ...aim], 3));
-  selectionLine = new THREE.Line(
-    g,
-    new THREE.LineBasicMaterial({ color: cssValue('selection'), depthTest: false }),
-  );
-  scene.add(selectionLine);
+  syncAimMarker(sample.anchor);
   selectionMarker.position.fromArray(pointCloud.geometry.attributes.position.array, i * 3);
   selectionMarker.visible = true;
-  const delta = aim.map((x, k) => x - eye[k]),
-    yaw = (Math.atan2(delta[1], delta[0]) * 180) / Math.PI,
-    pitch = (-Math.atan2(delta[2], Math.hypot(delta[0], delta[1])) * 180) / Math.PI;
-  $('detailTitle').textContent = best.hp
-    ? `${best.walls ? 'Wallbang' : 'Direct'} · ${best.hp} HP${selectedWeapon().pellets > 1 ? '/pellet' : ''} · ${HITGROUPS[best.group] ?? `hitgroup ${best.group}`}`
-    : 'No hit';
-  $('detailText').textContent =
-    `${r[0] ? 'Crouching' : 'Standing'} shooter · ${best.walls} wall${best.walls === 1 ? '' : 's'} · aim yaw ${yaw.toFixed(2)}° pitch ${pitch.toFixed(2)}° · origin ${[r[2], r[3], r[4]].map((x) => x.toFixed(1)).join(' ')}`;
   $('standHere').hidden = false;
   design.selected(true);
+  void inspectShot(sample.eye, i, sample.anchor);
+  schedule();
 }
 function projectClick(e: PointerEvent) {
   if (e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -982,23 +949,23 @@ function lockScan(active: boolean) {
   busy = active;
   $('scan').disabled = active || loadingScene || !hasMap();
   $('gameMode').disabled = active || loadingScene;
-  $('cs2Trace').disabled = active || loadingScene || !cs2?.render;
-  $('cs2SourceCamera').disabled = loadingScene || !cs2?.render;
-  $('cs2TargetCamera').disabled = loadingScene || !cs2?.render;
+  $('traceShot').disabled = active || loadingScene || !hasMap();
+  $('sourceCamera').disabled = loadingScene || !hasMap();
+  $('targetCamera').disabled = loadingScene || !hasMap();
   $('cancel').disabled = !active;
   $('cancel').textContent = 'Stop';
   if (!active) focusScanAfterStop = false;
   if (returnFocus && !$('scan').disabled) $('scan').focus({ preventScroll: true });
-  bookmarks.setScanning(active || loadingScene || !!cs2);
+  bookmarks.setScanning(active || loadingScene || !analysis().definition.features.bookmarks);
   library.setBusy(active || loadingScene);
   for (const id of ['restore', 'mapFile', 'modelFile', 'materialFile', 'snapshotFile'] as const)
-    $(id).disabled = active || loadingScene;
+    $(id).disabled = active || loadingScene || !analysis().definition.features.importFiles;
 }
 function invalidateScan(message: string) {
   revision++;
   if (busy) stopScan();
   rows = new Float32Array();
-  if (cs2) cs2.points = [];
+  analysis().clearSamples();
   updatePoints();
   $('progressText').textContent = message;
   $('progress').value = 0;
@@ -1006,169 +973,144 @@ function invalidateScan(message: string) {
 function stopScan() {
   if (!busy) return;
   focusScanAfterStop = document.activeElement === $('cancel');
-  if (cs2) cs2.cancel();
-  else worker?.postMessage({ type: 'cancel' });
+  analysis().cancel();
   $('cancel').disabled = true;
   $('cancel').textContent = 'Stopping…';
 }
 function scan() {
+  void runScan();
+}
+async function runScan() {
   clearError();
-  if (cs2) {
-    void scanCs2();
+  if (!hasMap() || busy || loadingScene) return;
+  const game = analysis();
+  const settings = {
+    spacing: number('spacing'),
+    radius: number('radius'),
+    workers: number('workers'),
+  };
+  try {
+    validateScan(settings, game.definition);
+  } catch (e) {
+    error(e);
     return;
   }
-  if (!engine || !pose || busy || loadingScene || !assetSet.map || assetSet.materials === undefined)
-    return;
-  pauseNavigation();
   if (!updateTarget(false)) return;
-  const spacing = number('spacing'),
-    radius = number('radius'),
-    workers = number('workers');
-  for (const id of ['spacing', 'radius', 'armorValue'] as const) {
-    if (!$(id).disabled && !$(id).checkValidity()) {
-      design.reveal($(id));
-      $(id).reportValidity();
+  pauseNavigation();
+  const token = revision;
+  lockScan(true);
+  try {
+    const result = await game.scan(settings, (event) => {
+      if (token !== revision) return;
+      if (event.native) progress(event.native);
+      else {
+        $('progress').max = event.total || 1;
+        $('progress').value = event.done;
+        $('progressText').textContent = `${event.phase} · ${event.done}/${event.total}`;
+      }
+    });
+    if (token !== revision || game !== analysis()) {
+      game.clearSamples();
       return;
     }
-  }
-  if (
-    !Number.isInteger(spacing) ||
-    spacing < 3 ||
-    spacing > 128 ||
-    !Number.isInteger(radius) ||
-    radius < 64 ||
-    radius > selectedWeapon().maxDistance ||
-    ![1, 2, 4].includes(workers)
-  ) {
-    error(
-      Error(
-        `Spacing must be 3–128; radius 64–${selectedWeapon().maxDistance}; workers 1, 2, or 4.`,
-      ),
-    );
-    return;
-  }
-  scanRevision = revision;
-  lockScan(true);
-  worker = new Worker(new URL('./workers/scan.worker.ts', import.meta.url), { type: 'module' });
-  worker.onerror = (e) => {
-    lockScan(false);
-    error(Error(errorMessage(e)));
-    worker?.terminate();
-  };
-  worker.onmessage = ({ data: m }: MessageEvent<ScanResponse>) => {
-    if (m.type === 'progress') {
-      if (scanRevision === revision) progress(m);
-    } else if (m.type === 'error') {
-      lockScan(false);
-      error(Error(m.message));
-      worker?.terminate();
-    } else if (m.type === 'complete') {
-      lockScan(false);
-      worker?.terminate();
-      if (scanRevision !== revision) {
-        return;
-      }
-      rows = m.rows;
-      pointMaterial.uniforms.size.value = spacing * 0.8;
-      updatePoints();
+    rows = goldsrc.rows;
+    pointMaterial.uniforms.size.value = settings.spacing * 0.8;
+    updatePoints();
+    if (result.native) {
       progress(
-        { ...m, phase: m.cancelled ? 'Cancelled' : 'Complete' },
-        m.cancelled
-          ? `Cancelled at ${fmt(m.done)}/${fmt(m.total)} · finished work cached`
-          : `Done in ${(m.seconds ?? 0).toFixed(1)} s · ${fmt(m.computed)} new, ${fmt(m.reused)} cached`,
+        { ...result.native, phase: result.cancelled ? 'Cancelled' : 'Complete' },
+        result.summary,
       );
-      window.labLastScan = { ...m, rows: undefined };
-    }
-  };
-  worker.postMessage({
-    type: 'scan',
-    map: assetSet.map,
-    brushes: bsp.brushes,
-    materials: assetSet.materials,
-    modelHash,
-    pose,
-    expansion: number('expansion'),
-    target: targetSettings().p,
-    spacing,
-    radius,
-    workers,
-    weapon: selectedWeaponID(),
-  } satisfies ScanRequest);
+      window.labLastScan = { ...result.native, rows: undefined };
+    } else $('progressText').textContent = result.summary;
+  } catch (e) {
+    error(e);
+  } finally {
+    lockScan(false);
+  }
 }
-
 function writeTarget(point: V3) {
   (['tx', 'ty', 'tz'] as const).forEach((id, i) => {
     $(id).value = String(point[i]);
   });
 }
 function writeSource(point: V3) {
-  (['cs2SourceX', 'cs2SourceY', 'cs2SourceZ'] as const).forEach((id, i) => {
+  (['sourceX', 'sourceY', 'sourceZ'] as const).forEach((id, i) => {
     $(id).value = String(point[i]);
   });
 }
 let shotRevision = 0;
-async function traceCs2(
-  source = (['cs2SourceX', 'cs2SourceY', 'cs2SourceZ'] as const).map(number) as V3,
+async function inspectShot(
+  source = (['sourceX', 'sourceY', 'sourceZ'] as const).map(number) as V3,
   selected?: number,
+  anchor?: number,
 ) {
-  const game = cs2;
-  if (!game?.render || loadingScene || busy) return;
+  const game = analysis();
+  if (!hasMap() || loadingScene || busy) return;
   if (!source.every(Number.isFinite)) {
     error(Error('Source coordinates must be finite'));
     return;
   }
-  const token = ++shotRevision;
-  const revisionAtStart = revision;
+  const token = ++shotRevision,
+    atStart = revision;
   try {
-    const shot = await game.trace(source);
+    const details = await game.inspect(source, damageView(), anchor);
     if (
-      cs2 !== game ||
-      shotRevision !== token ||
-      revisionAtStart !== revision ||
+      game !== analysis() ||
+      token !== shotRevision ||
+      revision !== atStart ||
       (selected !== undefined && selection !== selected)
     )
       return;
-    game.drawShot(shot);
     writeSource(source);
-    $('cs2Shot').textContent = game.describe(shot);
-    $('detailTitle').textContent = `AWP · ${shot.status.replaceAll('-', ' ')}`;
-    $('detailText').textContent =
-      `${shot.damage === null ? 'Unknown' : shot.damage.toFixed(2)} residual damage estimate · ${shot.spans.length} material intervals · simulator only`;
-    schedule();
-    return shot;
-  } catch (e) {
-    if (cs2 === game) error(e);
-  }
-}
-async function scanCs2() {
-  const game = cs2;
-  if (!game?.render || busy || loadingScene) return;
-  pauseNavigation();
-  if (!updateTarget(false)) return;
-  const token = revision;
-  lockScan(true);
-  try {
-    const reply = await game.scan((tested, total) => {
-      if (token !== revision) return;
-      $('progress').max = total;
-      $('progress').value = tested;
-      $('progressText').textContent = `CS2 floor/clearance and AWP tracing · ${tested}/${total}`;
-    });
-    if (cs2 !== game || token !== revision) {
-      game.points = [];
-      return;
+    $('shotDetails').textContent = details.text;
+    $('detailTitle').textContent = details.title;
+    $('detailText').textContent = details.summary;
+    if (selectionLine) {
+      scene.remove(selectionLine);
+      selectionLine.geometry.dispose();
+      selectionLine.material.dispose();
     }
-    pointMaterial.uniforms.size.value = 51.2;
-    updatePoints();
-    $('progressText').textContent =
-      `${reply.cancelled ? 'Stopped' : 'Complete'} · ${reply.tested}/625 grid cells · ${game.points.length} standing positions · ${((reply.ms ?? 0) / 1000).toFixed(2)} s · estimates only`;
-    $('progress').value = reply.tested ?? 0;
+    selectionLine = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(...details.source),
+        new THREE.Vector3(...details.aim),
+      ]),
+      new THREE.LineBasicMaterial({ color: cssValue('selection'), depthTest: false }),
+    );
+    scene.add(selectionLine);
+    disposeGroup(inspectionGroup);
+    const from = new THREE.Vector3(...details.source),
+      direction = new THREE.Vector3(...details.aim).sub(from).normalize();
+    for (const span of details.intervals ?? []) {
+      const entry = from.clone().addScaledVector(direction, span.enter),
+        exit = from.clone().addScaledVector(direction, span.exit);
+      const lines = [...entry.toArray(), ...exit.toArray()];
+      for (const p of [entry, exit])
+        for (const axis of [
+          new THREE.Vector3(3, 0, 0),
+          new THREE.Vector3(0, 3, 0),
+          new THREE.Vector3(0, 0, 3),
+        ])
+          lines.push(...p.clone().sub(axis).toArray(), ...p.clone().add(axis).toArray());
+      inspectionGroup.add(
+        new THREE.LineSegments(
+          new THREE.BufferGeometry().setAttribute(
+            'position',
+            new THREE.Float32BufferAttribute(lines, 3),
+          ),
+          new THREE.LineBasicMaterial({ color: 0xffaa33, depthTest: false }),
+        ),
+      );
+    }
+    schedule();
+    return details;
   } catch (e) {
-    if (cs2 === game) error(e);
-  } finally {
-    lockScan(false);
+    if (game === analysis()) error(e);
   }
 }
+const traceCs2 = inspectShot;
+
 let originalView: { camera: number[]; target: number[]; cut: number } | undefined;
 async function switchGame(next: string) {
   if (busy || loadingScene || (next === 'cs2') === !!cs2) return;
@@ -1183,6 +1125,7 @@ async function switchGame(next: string) {
   clearSelection();
   rows = new Float32Array();
   bookmarks.setReady(false);
+  $('progress').value = 0;
   if (next === 'cs2') {
     originalView = {
       camera: camera.position.toArray(),
@@ -1193,7 +1136,11 @@ async function switchGame(next: string) {
     disposeGroup(targetGroup);
     skyRevision++;
     setSky(null);
-    gameUI(true);
+    gameUI(CS2);
+    library.setPrepared({
+      name: 'de_inferno',
+      note: 'Prepared local CS2 map. Update with bun run cs2:prepare --render and bun run cs2:prepare:player.',
+    });
     try {
       const { Cs2Game } = await import('./games/cs2');
       const game = new Cs2Game(schedule, error);
@@ -1201,11 +1148,10 @@ async function switchGame(next: string) {
       await game.load((message) => {
         $('assetsStatus').textContent = message;
       });
-      scene.add(game.group, game.shots);
+      scene.add(game.group);
       applyGameView();
       game.textures($('textures').checked);
-      writeTarget(game.target);
-      writeSource([77.46, 1227.8, 156.9]);
+      poseUI(game.poseChoices);
       $('cut').min = String(Math.floor(game.bounds.min.z) - 1);
       $('cut').max = String(Math.ceil(game.bounds.max.z) + 1);
       applyCut(Number($('cut').max));
@@ -1217,8 +1163,7 @@ async function switchGame(next: string) {
       orbit.update();
       $('assetsStatus').textContent =
         `CS2 · ${game.meta.map} · ${game.meta.triangleCount.toLocaleString()} physics triangles · ${(game.timing?.loadMs ?? 0).toFixed(0)} ms collision load`;
-      $('progressText').textContent =
-        'CS2 ready · AWP surrogate · 64-unit grid / ±768 units · standing scan only';
+      $('progressText').textContent = game.definition.scan.note;
       design.map(`CS2 / ${game.meta.map}`);
       window.labReady = true;
     } catch (e) {
@@ -1238,7 +1183,9 @@ async function switchGame(next: string) {
   schedule();
 }
 function restoreOriginalGame() {
-  gameUI(false);
+  gameUI(GOLDSRC);
+  library.setPrepared(undefined);
+  poseUI(goldsrc.poseChoices);
   applyGameView();
   syncArmor();
   if (engine && bsp) {
@@ -1267,16 +1214,18 @@ function restoreOriginalGame() {
 $('gameMode').onchange = () => {
   void switchGame($('gameMode').value);
 };
-$('cs2SourceCamera').onclick = () => {
+$('sourceCamera').onclick = () => {
   writeSource(camera.position.toArray() as V3);
 };
-$('cs2TargetCamera').onclick = () => {
-  writeTarget(camera.position.toArray() as V3);
+$('targetCamera').onclick = () => {
+  const point = camera.position.toArray() as V3;
+  point[2] -= analysis().definition.target.eyeOffsets[number('targetPosture') ? 1 : 0];
+  writeTarget(point);
   updateTarget();
 };
-$('cs2Trace').onclick = () => {
+$('traceShot').onclick = () => {
   pauseNavigation();
-  void traceCs2();
+  void inspectShot();
 };
 for (const id of [
   'tx',
@@ -1284,6 +1233,7 @@ for (const id of [
   'tz',
   'yaw',
   'sequence',
+  'poseFrame',
   'yawBlend',
   'pitchBlend',
   'gait',
@@ -1306,7 +1256,10 @@ for (const id of ['spacing', 'radius'] as const) {
   $(id).addEventListener('change', () => invalidateScan('Scan settings changed. Scan to update.'));
 }
 $('armorValue').required = true;
-$('aimPoint').addEventListener('change', () => updatePoints(true));
+$('aimPoint').addEventListener('change', () => {
+  syncAimMarker();
+  updatePoints(true);
+});
 for (const id of ['armor', 'armorValue'] as const)
   $(id).addEventListener('change', () => {
     if (!$('armorValue').disabled && !$('armorValue').reportValidity()) return;
@@ -1465,52 +1418,45 @@ $('overview').onclick = () => {
   schedule();
 };
 function placeTarget() {
-  if (cs2) {
-    if (mode !== 'walk') {
-      setMode('walk');
-      return;
-    }
-    if (!cs2.state?.grounded) {
-      error(Error('Stand on a floor before placing the target'));
-      return;
-    }
-    writeTarget(cs2.walker.eye as V3);
-    updateTarget();
-    return;
-  }
-  if (!engine || !model) return;
+  if (!hasMap()) return;
   if (mode !== 'walk') {
     setMode('walk');
     return;
   }
   try {
-    const placed = capturePlacement(walker, lookYaw, lookPitch, model.sequences);
-    (['tx', 'ty', 'tz'] as const).forEach((id, i) => {
-      $(id).value = String(placed.p[i]);
-    });
-    $('yaw').value = String(placed.yaw);
-    $('pitch').value = String(placed.pitch);
-    $('targetPosture').value = String(placed.duck ? '1' : '0');
+    const body = activeWalker();
+    const placed = analysis().placement(
+      { origin: body.origin as V3, crouched: body.duck, grounded: body.ground },
+      lookYaw,
+      lookPitch,
+    );
+    writeTarget(placed.p);
+    for (const id of ['yaw', 'pitch', 'yawBlend', 'pitchBlend', 'gait', 'expansion'] as const)
+      $(id).value = String(placed[id]);
     $('sequence').value = String(placed.seq);
-    for (const [key, value] of Object.entries(placed.options))
-      control(key as ElementID).value = String(value);
+    $('poseFrame').value = String(placed.frame);
     if (updateTarget()) clearError();
   } catch (e) {
     error(e);
   }
 }
 $('targetPosture').onchange = () => {
-  if (!model) return;
-  const previous = model.sequences[number('sequence')]?.name.startsWith('crouch'),
-    duck = $('targetPosture').value === '1',
-    sequence = postureSequence(model.sequences, duck);
-  if (!sequence) {
-    error(Error('Matching posture is not available in this model'));
+  if (!hasMap()) return;
+  const duck = $('targetPosture').value === '1',
+    choices = analysis().poseChoices;
+  const previous = choices.find((c) => c.index === number('sequence'))?.crouched;
+  const next = choices.find((c) => c.crouched === duck);
+  if (!next) {
+    error(Error('No matching pose clip in the imported model'));
     return;
   }
-  if (previous !== duck) $('tz').value = String(number('tz') + (duck ? -18 : 18));
-  $('sequence').value = String(sequence.index);
-  $('gait').value = String(duck ? 2 : 1);
+  if (previous !== duck)
+    $('tz').value = String(
+      number('tz') + (duck ? 1 : -1) * analysis().definition.target.crouchOriginShift,
+    );
+  $('sequence').value = String(next.index);
+  $('poseFrame').value = '0';
+  if (analysis().definition.features.blend) $('gait').value = String(duck ? 2 : 1);
   updateTarget();
 };
 $('export').onclick = () => {
@@ -1768,7 +1714,7 @@ window.labDebug = {
     return shownCount;
   },
   get rows() {
-    return cs2 ? cs2.points.length : rows.length / ROW;
+    return analysis().count;
   },
   get mode() {
     return mode;
@@ -1789,6 +1735,9 @@ window.lab = {
   traceCs2,
   get cs2() {
     return cs2;
+  },
+  get analysis() {
+    return analysis();
   },
   get engine() {
     return engine;
@@ -1825,6 +1774,7 @@ window.lab = {
 };
 initializeWeapons();
 loadPrefs();
+gameUI(GOLDSRC);
 showSky();
 syncArmor();
 pointMaterial.depthTest = !$('xray').checked;
@@ -1887,6 +1837,7 @@ declare global {
     };
     lab: typeof windowAPI & {
       readonly cs2: Cs2Game | undefined;
+      readonly analysis: GameAnalysis;
       engine: Engine;
       bsp: BSP;
       model: ReturnType<typeof readStudio>;

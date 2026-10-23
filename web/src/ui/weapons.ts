@@ -1,4 +1,10 @@
-import { DEFAULT_WEAPON, getWeapon, isWeaponID, WEAPONS } from '../engine/weapons.ts';
+import {
+  DEFAULT_WEAPON,
+  getWeapon,
+  isWeaponID,
+  WEAPONS,
+  type WeaponID,
+} from '../engine/weapons.ts';
 import { $ } from './dom.ts';
 
 export function selectedWeapon() {
@@ -19,9 +25,12 @@ export function selectWeapon(id: string) {
   $('weaponNote').textContent = `Per pellet · ${weapon.pellets} pellets/shot`;
 }
 
-export function initializeWeapons() {
+export function initializeWeapons(
+  allowed: readonly WeaponID[] = Object.keys(WEAPONS) as WeaponID[],
+) {
   const groups = new Map<string, HTMLOptGroupElement>();
   for (const [id, weapon] of Object.entries(WEAPONS)) {
+    if (!allowed.includes(id as WeaponID)) continue;
     let group = groups.get(weapon.category);
     if (!group) {
       group = document.createElement('optgroup');
@@ -34,5 +43,5 @@ export function initializeWeapons() {
     group.append(option);
   }
   $('weapon').replaceChildren(...groups.values());
-  selectWeapon(DEFAULT_WEAPON);
+  selectWeapon(allowed.includes(DEFAULT_WEAPON) ? DEFAULT_WEAPON : allowed[0]);
 }

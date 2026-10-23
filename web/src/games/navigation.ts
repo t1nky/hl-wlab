@@ -6,6 +6,7 @@ export interface MoveInput {
   duck: boolean;
 }
 export interface NavigationBody {
+  readonly origin: number[];
   readonly eye: number[];
   readonly duck: boolean;
   readonly ground: boolean;

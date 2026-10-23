@@ -1,14 +1,19 @@
 import * as THREE from 'three';
 import type { WalkState } from '../../cs2/movement';
 import { loadRenderMap, type RenderMap } from '../../cs2/render-map';
+import { CS2_ROW, classifyCs2, cs2Sample, type ScanStats } from '../../cs2/scan';
 import { type Metadata, required, type Shot, type V3 } from '../../cs2/types';
+import {
+  type AnalysisProgress,
+  CS2,
+  type DamageView,
+  type GameAnalysis,
+  type ScanSettings,
+  type TargetInput,
+} from './contracts';
 import { AsyncMovement, type MoveInput, type NavigationBody } from './navigation';
+import { intersectTarget, type PlayerPackage, playerPose, type TargetPose } from './target';
 
-export interface ScanPoint {
-  source: V3;
-  damage: number | null;
-  status: Shot['status'];
-}
 interface Reply {
   id: number;
   kind: string;
@@ -16,7 +21,6 @@ interface Reply {
   meta?: Metadata;
   state?: WalkState;
   shot?: Shot;
-  points?: ScanPoint[];
   tested?: number;
   total?: number;
   ms?: number;
@@ -24,12 +28,14 @@ interface Reply {
   loadMs?: number;
   buildMs?: number;
   cached?: boolean;
+  rows?: Float32Array;
+  stats?: ScanStats;
 }
 
 /** Source 2 backend. Owns private map resources and worker; never owns DOM/input/camera. */
-export class Cs2Game {
+export class Cs2Game implements GameAnalysis {
+  readonly definition = CS2;
   readonly group = new THREE.Group();
-  readonly shots = new THREE.Group();
   readonly worker = new Worker(new URL('../../cs2/worker.ts', import.meta.url), { type: 'module' });
   readonly bounds = new THREE.Box3();
   readonly movement: AsyncMovement<WalkState>;
@@ -37,7 +43,9 @@ export class Cs2Game {
   meta!: Metadata;
   render?: RenderMap;
   target: V3 = [457.28, 1846.2, 184];
-  points: ScanPoint[] = [];
+  rows: Float32Array = new Float32Array();
+  player!: PlayerPackage;
+  targetPose?: TargetPose;
   state?: WalkState;
   timing?: Pick<Reply, 'loadMs' | 'buildMs' | 'cached'>;
   private sequence = 0;
@@ -47,11 +55,16 @@ export class Cs2Game {
     number,
     { resolve: (reply: Reply) => void; reject: (e: Error) => void }
   >();
-  private scanProgress?: (tested: number, total: number) => void;
+  private scanProgress?: (event: AnalysisProgress) => void;
   constructor(changed: () => void, error: (error: unknown) => void) {
     this.worker.onmessage = ({ data: reply }: MessageEvent<Reply>) => {
       if (reply.kind === 'progress') {
-        this.scanProgress?.(reply.tested ?? 0, reply.total ?? 625);
+        this.scanProgress?.({
+          phase: 'Floor/hull and posed-target tracing',
+          done: reply.tested ?? 0,
+          total: reply.total ?? 0,
+          seconds: 0,
+        });
         return;
       }
       const request = this.pending.get(reply.id);
@@ -78,6 +91,9 @@ export class Cs2Game {
     );
     const game = this;
     this.walker = {
+      get origin() {
+        return game.state?.foot ?? game.target;
+      },
       get eye() {
         return game.state?.eye ?? game.target;
       },
@@ -108,6 +124,15 @@ export class Cs2Game {
     progress('Loading CS2 physics and cached BVH…');
     const reply = await this.request({ op: 'load', includeBuffer: false });
     this.meta = required(reply.meta);
+    const playerResponse = await fetch('/local/player.json', {
+      signal: this.abort.signal,
+      cache: 'no-store',
+    });
+    if (!playerResponse.ok)
+      throw Error('Prepare real player poses first: bun run cs2:prepare:player');
+    this.player = await playerResponse.json();
+    if (this.player.steamInf !== this.meta.steamInf)
+      throw Error('Player/map versions differ; prepare both from the current installation');
     this.timing = { loadMs: reply.loadMs, buildMs: reply.buildMs, cached: reply.cached };
     this.render = await loadRenderMap({
       signal: this.abort.signal,
@@ -122,38 +147,96 @@ export class Cs2Game {
     this.bounds.setFromObject(this.render.group);
     await this.startWalk([77.46, 1227.8, 156.9]);
   }
-  async startWalk(eye: V3, resume = false) {
+  async startWalk(eye: V3, resume = false, crouched = false) {
     this.movement.pause();
     if (!resume || !this.state)
-      this.state = required((await this.request({ op: 'walk-start', eye })).state);
+      this.state = required((await this.request({ op: 'walk-start', eye, crouched })).state);
     return required(this.state);
   }
   async trace(source: V3, target = this.target) {
+    if (this.targetPose) target = intersectTarget(source, target, this.targetPose)?.point ?? target;
     return required((await this.request({ op: 'trace', source, target })).shot);
   }
-  async scan(progress: (tested: number, total: number) => void) {
+  get count() {
+    return this.rows.length / CS2_ROW;
+  }
+  get poseChoices() {
+    return (
+      this.player?.clips.map((clip, index) => ({
+        index,
+        name: clip.name,
+        frames: clip.frames.length,
+        crouched: clip.crouched,
+      })) ?? []
+    );
+  }
+  setTarget(input: TargetInput) {
+    this.targetPose = playerPose(this.player, input.p, input.yaw, input.seq, input.frame);
+    this.target = this.targetPose.aims[1];
+    return this.targetPose;
+  }
+  clearSamples() {
+    this.rows = new Float32Array();
+  }
+  placement(body: { origin: V3; crouched: boolean; grounded: boolean }, yaw: number): TargetInput {
+    if (!body.grounded) throw Error('Stand on a floor before placing the target');
+    return {
+      p: body.origin,
+      yaw: (yaw * 180) / Math.PI,
+      pitch: 0,
+      seq: this.poseChoices.find((c) => c.crouched === body.crouched)?.index ?? 0,
+      frame: 0,
+      yawBlend: 128,
+      pitchBlend: 127,
+      gait: 0,
+      expansion: 0,
+    };
+  }
+  classify(view: DamageView) {
+    return classifyCs2(this.rows, required(this.targetPose), view);
+  }
+  selection(index: number, view: DamageView) {
+    return cs2Sample(this.rows, index, required(this.targetPose), view);
+  }
+  async inspect(
+    source: V3,
+    view: DamageView,
+    anchor = view.aimPoint === 'chest' ? 0 : view.aimPoint === 'pelvis' ? 2 : 1,
+  ) {
+    const aim = required(this.targetPose).aims[anchor];
+    const hit = intersectTarget(source, aim, required(this.targetPose));
+    const shot = await this.trace(source, hit?.point ?? aim);
+    return {
+      source,
+      aim: shot.target,
+      title: `AWP · ${shot.status.replaceAll('-', ' ')}`,
+      summary: `${shot.damage === null ? 'Unknown' : shot.damage.toFixed(2)} residual damage estimate · geometric hitgroup ${hit?.group ?? 'none'}`,
+      text: this.describe(shot),
+      intervals: shot.spans,
+    };
+  }
+  async scan(settings: ScanSettings, progress: (event: AnalysisProgress) => void) {
     this.scanProgress = progress;
     try {
-      const reply = await this.request({ op: 'scan', target: this.target });
-      this.points = required(reply.points);
-      return reply;
+      const reply = await this.request({
+        op: 'scan',
+        target: required(this.targetPose).origin,
+        settings,
+        pose: this.targetPose,
+      });
+      this.rows = required(reply.rows);
+      const stats = required(reply.stats);
+      return {
+        cancelled: !!reply.cancelled,
+        ms: reply.ms ?? 0,
+        summary: `${reply.cancelled ? 'Stopped' : 'Complete'} · ${stats.cells}/${stats.total} cells · ${stats.standing} standing + ${stats.crouching} crouching · ${((reply.ms ?? 0) / 1000).toFixed(2)} s · estimates only`,
+      };
     } finally {
       this.scanProgress = undefined;
     }
   }
   cancel() {
     void this.request({ op: 'cancel' }).catch(() => {});
-  }
-  classified() {
-    const positions = new Float32Array(this.points.length * 3);
-    const hp = new Float32Array(this.points.length);
-    const kind = new Float32Array(this.points.length);
-    this.points.forEach((point, i) => {
-      positions.set([point.source[0], point.source[1], point.source[2] - 63], i * 3);
-      hp[i] = point.damage ?? 0;
-      kind[i] = point.status === 'clear' ? 1 : point.status === 'estimated-penetration' ? 2 : 0;
-    });
-    return { positions, hp, kind };
   }
   textures(enabled: boolean) {
     this.render?.group.traverse((object) => {
@@ -168,40 +251,6 @@ export class Cs2Game {
         material.needsUpdate = true;
       }
     });
-  }
-  clearShot() {
-    for (const object of [...this.shots.children]) {
-      this.shots.remove(object);
-      if (object instanceof THREE.Line) {
-        object.geometry.dispose();
-        object.material.dispose();
-      }
-    }
-  }
-  drawShot(shot: Shot) {
-    this.clearShot();
-    const from = new THREE.Vector3(...shot.source);
-    const direction = new THREE.Vector3(...shot.target).sub(from).normalize();
-    const line = (a: THREE.Vector3, b: THREE.Vector3, color: number) =>
-      this.shots.add(
-        new THREE.Line(
-          new THREE.BufferGeometry().setFromPoints([a, b]),
-          new THREE.LineBasicMaterial({ color, depthTest: false }),
-        ),
-      );
-    line(from, new THREE.Vector3(...shot.target), 0x55ccee);
-    for (const span of shot.spans) {
-      const entry = from.clone().addScaledVector(direction, span.enter);
-      const exit = from.clone().addScaledVector(direction, span.exit);
-      line(entry, exit, 0xff6633);
-      for (const point of [entry, exit])
-        for (const axis of [
-          new THREE.Vector3(3, 0, 0),
-          new THREE.Vector3(0, 3, 0),
-          new THREE.Vector3(0, 0, 3),
-        ])
-          line(point.clone().sub(axis), point.clone().add(axis), 0xffcc33);
-    }
   }
   describe(shot: Shot) {
     const material = (id: number) => `${this.meta.materials[id]?.name ?? 'unknown'} (#${id})`;
@@ -223,8 +272,6 @@ export class Cs2Game {
     this.worker.terminate();
     for (const request of this.pending.values()) request.reject(Error('CS2 map closed'));
     this.pending.clear();
-    this.clearShot();
-    this.shots.removeFromParent();
     this.render?.dispose();
     this.group.removeFromParent();
     this.group.clear();

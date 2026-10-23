@@ -1,76 +1,11 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { BoxGeometry } from 'three';
 import { describe, expect, it } from 'vitest';
 import { CollisionMap } from '../cs2/collision';
 import { WalkController, type WalkInput } from '../cs2/movement';
-import { decodeMap, type Metadata, required, type V3 } from '../cs2/types';
+import { decodeMap, type Metadata, required } from '../cs2/types';
+import { type Box, fixture } from './helpers/cs2-map';
 
-type Box = { center: V3; size: V3; player?: boolean; bullet?: boolean; rotationY?: number };
-function fixture(boxes: Box[]) {
-  const positions: number[] = [];
-  const indices: number[] = [];
-  const shapes: number[] = [];
-  const meta: Metadata = {
-    schema: 1,
-    map: 'synthetic',
-    fingerprint: '',
-    steamInf: '',
-    binarySha256: '',
-    prepareMs: 0,
-    binaryBytes: 0,
-    vertexCount: 0,
-    triangleCount: 0,
-    weapon: { name: 'AWP', damage: 115, penetration: 2.5, range: 8192, rangeModifier: 0.99 },
-    materials: [
-      { name: 'concrete', hash: 0, distanceModifier: 1, damageModifier: 1, gameMaterial: null },
-    ],
-    shapes: [],
-    stats: {},
-    spawns: [],
-    warnings: [],
-  };
-  for (const [id, box] of boxes.entries()) {
-    const geometry = new BoxGeometry(...box.size)
-      .rotateY(box.rotationY ?? 0)
-      .translate(...box.center);
-    const firstTriangle = indices.length / 3;
-    const offset = positions.length / 3;
-    positions.push(...geometry.getAttribute('position').array);
-    indices.push(...Array.from(required(geometry.index).array, (index) => index + offset));
-    const triangleCount = indices.length / 3 - firstTriangle;
-    shapes.push(...Array<number>(triangleCount).fill(id));
-    meta.shapes.push({
-      kind: box.rotationY ? 'mesh' : 'hull',
-      source: 'synthetic',
-      group: '',
-      tags: [],
-      exclude: [],
-      player: box.player ?? true,
-      bullet: box.bullet ?? true,
-      firstTriangle,
-      triangleCount,
-      planes: box.center.flatMap((center, axis) => {
-        const normal = [0, 0, 0];
-        normal[axis] = 1;
-        return [
-          [...normal, center + box.size[axis] / 2],
-          [...normal.map((x) => -x), -center + box.size[axis] / 2],
-        ];
-      }),
-    });
-    geometry.dispose();
-  }
-  return new CollisionMap(
-    {
-      positions: new Float32Array(positions),
-      indices: new Uint32Array(indices),
-      shapes: new Uint32Array(shapes),
-      materials: new Uint32Array(shapes.length),
-    },
-    meta,
-  );
-}
 const floor: Box = { center: [0, 0, -10], size: [2000, 2000, 20] };
 const idle: WalkInput = { forward: 0, side: 0, jump: false, duck: false };
 function ticks(walker: WalkController, n: number, input: Partial<WalkInput> = {}, yaw = 0) {

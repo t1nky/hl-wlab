@@ -8,6 +8,7 @@ remains unchanged; no merge or deployment is performed.
 
 ```powershell
 bun run cs2:prepare --render   # once, or after a game/map update
+bun run cs2:prepare:player
 bun run dev
 ```
 
@@ -19,41 +20,86 @@ are shared. Only collision, map loading and shot simulation change with the game
 CS2 walking retains a 2,000-unit draw distance and a capped pixel budget;
 orbit and fly keep the full-map range. The legacy CS1.6 physics is unchanged.
 
-In **Target**, edit target point X/Y/Z, and the source's eye X/Y/Z; click **Trace
-AWP**. **Source at camera** uses the current viewpoint. Walk + **E** places the
-stationary target at your eye; move away, then set source at camera and trace.
-The line marks the physical solid intervals, with entry/exit crosses and surface
-IDs/thickness in the inspector. Scan uses the existing scan button, stop button,
-point colors, filters and click-to-inspect UI, bounded to 625 grid cells (64-unit
-spacing, ±768 units) and standing shooters. **Stand here** starts collision-aware
-walking at the selected origin. An indeterminate ray is not counted as a wallbang;
-selecting it shows its uncertainty in the shot details.
+In **Target**, choose stance, animation clip and frozen frame, edit origin/yaw,
+and use the shared source-eye coordinates and **Trace shot** button. CS2 target Z
+is a **feet origin**; CS1.6 keeps its MDL body origin. Walk + **E** captures the
+current stationary stance/origin; **Target at camera** subtracts the backend's
+eye offset. Both games display the actual posed hitbox wireframe, rather than a
+generic human silhouette. CS2 exports the installed Phoenix model's 19 capsules,
+86-bone skeleton and real rifle idle + AWP additive standing/crouching clips.
+CS1.6 uses the imported model's oriented hitboxes, sequence, integer animation
+frame, legacy blend/gait and expansion settings. These are frozen poses, not
+live animation graphs or IK; CS2 pitch layers are explicitly unsupported.
 
-CS2 uses point targets and an approximate AWP residual-damage model. GoldSrc
-player poses, armor/hitgroup multiplication, weapon choices, bookmarks and scene
-import/export are hidden or disabled for CS2. Switching back restores CS1.6
-target/scan values and camera, disposes CS2 GPU resources, and terminates its
-physics worker. CS2 is lazy-loaded; CS1.6 never downloads the CS2 map or starts
-its worker. Local map routes are shared by the two development servers and
-allow only the prepared package; they are not present in a production build.
+The shared scan button, stop button, result selection, walk-from-result, aim
+selector and filters operate through one analysis contract. Each backend declares
+weapons, worker choices, pose choices, coordinate semantics and supported features.
+CS2's existing weapon/worker controls are locked to AWP/one worker. Unsupported
+armor, MDL-only controls, bookmarks and import actions remain visibly disabled;
+there is no second CS2 inspector. Minimum damage is labelled **est.** for CS2
+(residual bullet damage), and **HP** for GoldSrc (posed hitgroup/armor effects).
+CS2 results intersect the shown capsules before tracing map obstruction to that
+hitpoint. Geometric hitgroup is reported separately; it does not multiply damage.
+The shared line renderer displays entry/exit crosses and solid intervals.
 
-The separation lives in `web/src/games/cs2.ts` (map, physics worker, scan/trace
-data and disposal), `games/navigation.ts` (async movement boundary) and
-`ui/game-mode.ts` (mode-specific controls/restoration). `main.ts` remains the
-original application's UI/control coordinator, with the GoldSrc engine intact.
+**Spacing and radius now work in CS2.** Defaults are 24 units / 1,024 units,
+with a 100,000-cell upfront budget; requests above the budget are rejected with
+an explanation, never silently clamped. All upward player-collision floors in
+the radius are tested using the walking swept 32x32 hull (standing 72, crouching
+54; eye offsets 64/46). This fixes the previous near-level four-corner floor test,
+which rejected ramps, steps and ground beneath upper floors. It does not establish
+route connectivity, a navmesh, match boundaries, other-player clearance or reachability;
+roof origins may also appear. Select **Crouching** to see crouched shootersthe
+default shared filter shows standing direct hits and wallbang estimates only.
+Indeterminate traces stay conservative and are inspectable using **No hit**.
+A saved minimum of 100 hides the penetration estimates in **Below min**; lower
+it to 1 when checking coverage. The minimum filter is shared between games.
 
-Shared-shell verification on the installed Inferno package: cached physics load
-396 ms / BVH restore 9.1 ms; the plaster regression traced in 0.7–0.9 ms with
-19.2495 units (48.9 cm) thickness and 42.9994 surrogate residual damage. The
-625-cell scan took 0.12–0.13 s, finding 99 standing origins: 30 clear, 7 estimated
-penetrating, 24 blocked, 38 indeterminate. These are local observations, not FPS
-or game-accuracy claims. Browser checks covered Ctrl and C crouch (64/46 eye
-height), rightward D movement, E placement, selecting/standing at a scanned
-origin, a pending walk/orbit change, and switching back to a real CS1.6 Inferno
-BSP. Target/scan values and camera restored, CS2 geometry was disposed and its
-worker rejected further requests, with no application errors or GL errors.
-CS1.6's bounded live scan returned 8 rows in 0.05 s. No new offline CS2 session
-was launched; game penetration/damage validation is still outstanding.
+On installed build 2000935, the same coarse 64/768 test now finds 375 standing
+and 394 crouching origins, versus the previous implementation's 99 standing
+origins. The default 24/1024 scan finds 4,629 standing + 4,754 crouching origins;
+the local Bun smoke took 2.34 s. Its head-anchor results contain 597 standing
+clear paths and 401 standing penetration estimates. These counts depend on the
+selected target/anchor; they are simulator observations, not in-game validation.
+Run `bun run cs2:smoke:scan` to reproduce and record exact source/aim examples in
+ignored `.local/cs2/scan-smoke.json`. The default posed target's feet are
+`457.28 1846.2 136.025`, on a verified hull-clear floor; yaw/frame are zero.
+
+Switching games restores each game's target, source, pose, scan settings and the
+original CS1.6 camera; closing CS2 disposes its render resources and worker.
+CS2 is lazy-loaded. Prepared map/player routes are local development middleware,
+never bundled game content or a production asset server.
+
+The reusable boundary is `web/src/games/contracts.ts` (capabilities, poses,
+scan/trace/result types), `games/goldsrc.ts` and `games/cs2.ts` (native adapters),
+`games/target.ts` (shared box/capsule wireframe and ray intersection), and
+`games/navigation.ts` (movement boundary). `ui/game-mode.ts` binds capabilities
+to the existing template; `main.ts` coordinates one set of controls, scan,
+selection and inspection rendering. Native GoldSrc cache/penetration logic remains.
+
+Prepare real CS2 target data once (and after updates):
+
+```powershell
+bun run cs2:prepare:player
+```
+
+`player.json` is a 54.7 KB ignored local package; conversion took 1.90 s here.
+It records model/animation paths, frame bone matrices, actual hitbox shapes,
+Steam version and importer fingerprint. Map/player versions must match: an
+installed game update during this work was correctly rejected until both were
+rebuilt. Real clip poses are preserved; live graph blending, aim pitch, IK and
+server hitbox parity are unverified. No player mesh or game export is committed.
+
+Browser verification used the shared UI for standing/crouching frame selection,
+yaw, tracing, dense scanning, filters and game-switch restoration. The current
+Chrome scan took 1.58 s for the same 9,383 candidates; the crouching plaster shot
+reported 19.29 units / 49.0 cm and 42.96 surrogate residual damage in 0.30 ms.
+CS1.6's real Inferno/MDL load showed 20 hitboxes and 111 sequences; a frame-1
+64/128 native scan returned eight results in 0.08 s with no application/GL errors.
+T3 snapshots repeatedly timed out, so visual captures used the computer-use
+browser fallback. Chrome console error/warning counts were zero. Review images:
+`.local/cs2/qa/posed-cs2-standing.png` and `posed-cs2-crouching.png`.
+Public build/Pages audit, POC build, importer tests and all 125 web tests pass.
 
 ## Standalone diagnostic entry
 
@@ -132,11 +178,11 @@ meshes retain visible contacts and return **indeterminate**, without inventing a
 exit or thickness. Cutaway only changes visibility/picking, never bullet collision.
 
 **Scan 25 × 25** checks a bounded 64-unit grid within ±768 units of the target.
-It probes for a floor between target Z+128 and Z−256, checks four flat support
-points, a 32×32×72 clearance box, and start-inside geometry. It is an approximation
-of standability, with no route connectivity, stair traversal, or navigation mesh.
-Green means this model reaches the point, red blocked, purple indeterminate. Click
-a point to inspect that individual shot. Progress and cancel operate between rows.
+It now uses the same floor/hull scan implementation as the shared shell, at the
+diagnostic page's 64-unit / 768-unit settings, with both shooter stances. That
+isolated page retains a point target for low-level physics inspection; use the
+shared application for posed hitboxes and the unified UI. No route connectivity
+or navigation mesh is inferred. Progress/cancel yield between bounded work slices.
 
 ## Data and implementation
 
@@ -261,7 +307,7 @@ Cache/quota failure still permits uncached operation. Delete site storage to res
 Local render resources use private HTTP revalidation, so an unchanged browser
 reload can reuse the downloaded files; decoded render geometry is rebuilt.
 
-The dedicated loopback Vite server exposes the collision/render manifests, map
+The dedicated loopback Vite server exposes the collision/render/player manifests, map
 binary and confined `render/` glTF/binary/PNG filenames at `/local/`; it never
 uploads them. POC build output is ignored `.local/cs2-build/`.
 Neither that build nor the map is added to the existing Pages build or precache.
@@ -272,8 +318,8 @@ the server can hold exported buffers open. Ordinary launches reuse prepared data
 ## Accuracy boundary
 
 The local weapon data reports AWP damage **115**, penetration **2.5**, range
-**8192**, range modifier **0.99**. Source build: ClientVersion **2000934**,
-PatchVersion **1.41.9.1**, SourceRevision **11150591**, October 20, 2026.
+**8192**, range modifier **0.99**. Source build: ClientVersion **2000935**,
+PatchVersion **1.41.9.2**, SourceRevision **11162119**, October 22, 2026.
 Material distance/damage modifiers are read from local
 `scripts/surfaceproperties_game.txt`, with explicit surface inheritance from
 `surfaceproperties/surfaceproperties.vsurf_c`. Missing unresolved values remain
@@ -288,8 +334,8 @@ modifier as retention for each contiguous obstacle, and decays by
 weapon range, blockbullets/sky, or damage below one. These interpretations and
 constants are not game-validated. Start-inside, target-inside, unresolved surfaces
 and inconsistent geometry return indeterminate. Physical thickness is separate
-from this estimate; no pose, hitbox, hitgroup, armor, spread, ricochet, or breakage
-effects are included.
+from this estimate. The shared application intersects frozen real player hitboxes,
+but no hitgroup/armor damage multiplier, spread, ricochet or breakage is simulated.
 
 No CS2 session was controlled during verification. The user's offline screenshot
 shows plaster penetration and 48.9 cm thickness, consistent with the reported
@@ -302,10 +348,16 @@ Exact game damage and general penetration success remain unvalidated.
 bun run check                 # lint, tests, existing typecheck/build
 bun run cs2:check             # POC typecheck/build; outputs only to .local
 bun run cs2:smoke             # actual local map + warm trace timing report
+bun run cs2:smoke:scan        # actual posed target + two bounded scan densities
+bun run cs2:test:importer     # local C# math regressions, no game assets
 bun run check:repo            # audit staged index before committing
 ```
 
-Verified October 22, 2026: **105 tests passed, 9 existing private-fixture skips**.
+Verified October 22, 2026: **125 tests passed, one private skybox-fixture skip**,
+plus 11 importer math tests. New regressions cover capsule/cap/tangent/start-inside
+rays, rotated boxes/bones, actual installed standing/crouch poses, MDL RLE frame
+spans/held samples, ramps, stacked floors, crouch-only clearance, direct-hit scan
+coverage, cancellation and capability/budget validation.
 Collision checks cover synthetic closed meshes/hulls, oblique thickness,
 start/target-inside, misses, collision filtering, transformed planes, triangle
 material/shape identity through BVH traversal, unclosed/conflicting meshes,
@@ -323,7 +375,8 @@ paint-alpha interpretation, UV transforms, nested batch transforms/tint/reflecti
 transparent exclusions/resource disposal, foliage wind data and actual Inferno
 decal/layer/LOD data.
 
-Measured on this machine, not general benchmark promises: importer reports
+Historical point-target POC measurements (before the shared posed scan above):
+importer reports
 2.55 s including hashing/serialization, fingerprint cache check 107 ms; uncached
 worker BVH build 852 ms; cached worker load 0.49 s including fetch/hash/cache,
 9 ms BVH restoration (these worker timings exclude main-thread render upload).

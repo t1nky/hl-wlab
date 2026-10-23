@@ -1,7 +1,3 @@
-:root[data-game="cs2"] [data-game-only="goldsrc"],
-:root:not([data-game="cs2"]) [data-game-only="cs2"] {
-  display: none;
-}
 header .game-mode {
   display: flex;
   flex-direction: row;
@@ -13,7 +9,7 @@ header .game-mode {
 header .game-mode lab-select {
   min-width: 135px;
 }
-#cs2Shot {
+#shotDetails {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font-variant-numeric: tabular-nums;
