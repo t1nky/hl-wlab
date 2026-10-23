@@ -1,7 +1,6 @@
-import { MeshBVH, type SerializedBVH } from 'three-mesh-bvh';
 import type { ScanSettings } from '../src/games/contracts';
 import type { TargetPose } from '../src/games/target';
-import { CollisionMap } from './collision';
+import { type CollisionCache, CollisionMap } from './collision';
 import { WalkController, type WalkInput } from './movement';
 import { CS2_ROW, type ScanStats, scanMap } from './scan';
 import { decodeMap, type Metadata, type V3 } from './types';
@@ -36,7 +35,7 @@ function database(): Promise<IDBDatabase> {
     request.onerror = () => reject(request.error);
   });
 }
-async function readCache(key: string): Promise<SerializedBVH | undefined> {
+async function readCache(key: string): Promise<CollisionCache | undefined> {
   try {
     const db = await database();
     return await new Promise((resolve, reject) => {
@@ -54,7 +53,7 @@ async function readCache(key: string): Promise<SerializedBVH | undefined> {
     return undefined;
   }
 }
-async function saveCache(key: string, bvh: SerializedBVH) {
+async function saveCache(key: string, bvh: CollisionCache) {
   const db = await database();
   try {
     await new Promise<void>((resolve, reject) => {
@@ -79,31 +78,43 @@ async function load(id: number, includeBuffer = true) {
   const binary = await fetch(`/local/map.cs2map?v=${meta.fingerprint}`);
   if (!binary.ok) throw Error('Map collision data unavailable');
   const buffer = await binary.arrayBuffer();
+  const fetchMs = performance.now() - start;
+  const hashStart = performance.now();
   const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', buffer)), (b) =>
     b.toString(16).padStart(2, '0'),
   ).join('');
   if (hash !== meta.binarySha256) throw Error('Collision package hash mismatch; prepare again');
-  const cacheKey = `three0.170-bvh0.9.8-${hash}`;
-  const cached = await readCache(cacheKey);
+  const hashMs = performance.now() - hashStart;
+  const cacheKey = `three0.170-bvh0.9.8-slim1-${hash}`;
+  const cacheStart = performance.now();
+  let cached = await readCache(cacheKey);
+  const cacheReadMs = performance.now() - cacheStart;
   const buildStart = performance.now();
   try {
     map = new CollisionMap(decodeMap(buffer), meta, cached);
   } catch (error) {
     if (!cached) throw error;
+    cached = undefined;
     map = new CollisionMap(decodeMap(buffer), meta);
   }
   const buildMs = performance.now() - buildStart;
   walker = new WalkController(map);
   let cacheSaved = !!cached;
+  const saveStart = performance.now();
   if (!cached) {
     try {
-      await saveCache(cacheKey, MeshBVH.serialize(map.bvh));
+      // IndexedDB snapshots these buffers itself. Do not first clone another BVH and
+      // the entire collision index; indirect BVHs restore against the package's index.
+      await saveCache(cacheKey, map.cacheSnapshot());
       cacheSaved = true;
     } catch {
       /* Quota/private browsing must not prevent tracing. */
     }
   }
+  const cacheWriteMs = performance.now() - saveStart;
+  const transferStart = performance.now();
   const render = includeBuffer ? buffer.slice(0) : undefined;
+  const transferCopyMs = performance.now() - transferStart;
   scope.postMessage(
     {
       id,
@@ -114,6 +125,8 @@ async function load(id: number, includeBuffer = true) {
       buildMs,
       cached: !!cached,
       cacheSaved,
+      timings: { fetchMs, hashMs, cacheReadMs, cacheWriteMs, transferCopyMs },
+      collisionBytes: buffer.byteLength,
     },
     render ? [render] : [],
   );

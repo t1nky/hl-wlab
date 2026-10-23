@@ -1,6 +1,9 @@
 import type { Engine } from './engine/engine.ts';
 import type { Assets, Brush, BSP, Pose, Progress, Skybox, Target } from './engine/types.ts';
-import { createPointMaterial } from './render/points.ts';
+import { CS2_BACKGROUND } from './render/lighting.ts';
+import { createPointMaterial, updatePointGeometry } from './render/points.ts';
+import { viewPixelRatio } from './render/quality.ts';
+import { disposeGroup } from './render/resources.ts';
 import type { BookmarkState } from './storage/bookmarks.ts';
 import { assetRecord, hydrateMapTextures, loadLibraryAssets } from './storage/game-library.ts';
 import type { LibraryMapRef } from './storage/library-types.ts';
@@ -140,6 +143,7 @@ renderer.clippingPlanes = [cut];
 // slider never rebuild 100k+ point buffers.
 const pointMaterial = createPointMaterial(['miss', 'direct', 'wallbang', 'weak'].map(cssColor));
 const pointCloud = new THREE.Points(new THREE.BufferGeometry(), pointMaterial);
+let pointRows: Float32Array | undefined;
 scene.add(pointCloud);
 // Screen-sized markers stay findable at whole-map zoom, where hitbox wireframes shrink to a few pixels.
 function marker(color: string, size: number, hole: number) {
@@ -151,8 +155,11 @@ function marker(color: string, size: number, hole: number) {
     new THREE.ShaderMaterial({
       depthTest: false,
       transparent: true,
-      uniforms: { color: { value: cssColor(color) } },
-      vertexShader: `void main(){gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1);gl_PointSize=${(size * renderer.getPixelRatio()).toFixed(1)};}`,
+      uniforms: {
+        color: { value: cssColor(color) },
+        pixelRatio: { value: renderer.getPixelRatio() },
+      },
+      vertexShader: `uniform float pixelRatio;void main(){gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1);gl_PointSize=${size.toFixed(1)}*pixelRatio;}`,
       fragmentShader: `uniform vec3 color;void main(){float r=length(gl_PointCoord*2.-1.);if(r>1.||r<${hole.toFixed(2)})discard;gl_FragColor=vec4(r>.75?vec3(0):color,1);}`,
     }),
   );
@@ -210,20 +217,6 @@ function wakeNavigation() {
   schedule();
 }
 
-function disposeGroup(group: THREE.Group) {
-  for (const c of [...group.children]) {
-    group.remove(c);
-    if (!(c instanceof THREE.Mesh || c instanceof THREE.Line)) continue;
-    c.geometry?.dispose();
-    if (c.material) {
-      const ms = Array.isArray(c.material) ? c.material : [c.material];
-      for (const m of ms) {
-        (m.map || m.userData.texture)?.dispose();
-        m.dispose();
-      }
-    }
-  }
-}
 function renderMap() {
   if (cs2) return;
   disposeGroup(mapGroup);
@@ -392,16 +385,13 @@ function updatePoints(preserveSelection = false) {
   const previous = preserveSelection ? selection : null;
   clearSelection();
   design.results(analysis().count);
-  const c = analysis().classify(damageView()),
-    g = new THREE.BufferGeometry();
+  const c = analysis().classify(damageView());
   hp = c.hp;
   kind = c.kind;
-  shown = new Uint8Array(kind.length);
-  g.setAttribute('position', new THREE.BufferAttribute(c.positions, 3));
-  g.setAttribute('hp', new THREE.BufferAttribute(hp, 1));
-  g.setAttribute('kind', new THREE.BufferAttribute(kind, 1));
-  pointCloud.geometry.dispose();
-  pointCloud.geometry = g;
+  if (shown.length !== kind.length) shown = new Uint8Array(kind.length);
+  const source = cs2?.rows ?? rows;
+  pointCloud.geometry = updatePointGeometry(pointCloud.geometry, c, pointRows !== source);
+  pointRows = source;
   filterPoints();
   if (previous !== null && shown[previous]) selectPoint(previous);
 }
@@ -856,15 +846,24 @@ function applyGameView() {
   // One shared renderer. CS2 retains the POC's bounded walking draw distance and pixel budget.
   camera.far = cs2 && mode === 'walk' ? 2000 : 40000;
   camera.updateProjectionMatrix();
-  scene.fog = cs2 && mode === 'walk' ? new THREE.Fog(0x15232c, 1500, 2000) : null;
-  scene.background = cs2 ? new THREE.Color(0x15232c) : $('sky').checked ? skyTexture : null;
+  scene.fog = cs2 && mode === 'walk' ? new THREE.Fog(CS2_BACKGROUND, 1500, 2000) : null;
+  scene.background = cs2 ? new THREE.Color(CS2_BACKGROUND) : $('sky').checked ? skyTexture : null;
+  sizeViewport();
+}
+function sizeViewport() {
+  const w = canvas.clientWidth,
+    h = canvas.clientHeight;
   renderer.setPixelRatio(
-    cs2 ? (softwareGPU ? 0.75 : Math.min(devicePixelRatio, 1)) : Math.min(devicePixelRatio, 2),
+    viewPixelRatio(w, h, devicePixelRatio, !!cs2, !!softwareGPU, mode === 'walk'),
   );
-  renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
+  renderer.setSize(w, h, false);
+  camera.aspect = w / Math.max(1, h);
+  camera.updateProjectionMatrix();
   const ratio = renderer.getPixelRatio();
-  pointMaterial.uniforms.scale.value = (canvas.clientHeight * ratio) / 2;
+  pointMaterial.uniforms.scale.value = (h * ratio) / 2;
   pointMaterial.uniforms.sizeRange.value.set(3 * ratio, 16 * ratio);
+  for (const marker of [selectionMarker, targetMarker])
+    marker.material.uniforms.pixelRatio.value = ratio;
 }
 function look() {
   const d = new THREE.Vector3(
@@ -1640,14 +1639,9 @@ document.addEventListener('pointerlockchange', () => {
 });
 new ResizeObserver(() => {
   const w = canvas.clientWidth,
-    h = canvas.clientHeight,
-    ratio = renderer.getPixelRatio();
+    h = canvas.clientHeight;
   if (w && h) {
-    renderer.setSize(w, h, false);
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
-    pointMaterial.uniforms.scale.value = (h * ratio) / 2;
-    pointMaterial.uniforms.sizeRange.value.set(3 * ratio, 16 * ratio);
+    sizeViewport();
     schedule();
   }
 }).observe($('viewport'));
@@ -1702,10 +1696,30 @@ function tick(now: number) {
     look();
     if (moving) schedule();
   }
-  renderer.render(scene, camera);
+  renderFrame();
   frame++;
 }
+let renderCpuMs = 0;
+// Explicit render hook for local performance checks; normal UI remains demand driven.
+function renderFrame() {
+  const start = performance.now();
+  renderer.render(scene, camera);
+  renderCpuMs = performance.now() - start;
+}
 window.labDebug = {
+  get render() {
+    return {
+      cpuMs: renderCpuMs,
+      calls: renderer.info.render.calls,
+      triangles: renderer.info.render.triangles,
+      geometries: renderer.info.memory.geometries,
+      textures: renderer.info.memory.textures,
+      programs: renderer.info.programs?.length ?? 0,
+      pixelRatio: renderer.getPixelRatio(),
+      width: renderer.domElement.width,
+      height: renderer.domElement.height,
+    };
+  },
   get map() {
     return cs2?.meta?.map ?? assetSet.mapName;
   },
@@ -1735,6 +1749,7 @@ window.labDebug = {
   },
 };
 window.lab = {
+  renderFrame,
   whenStarted,
   switchGame,
   traceCs2,
@@ -1812,6 +1827,7 @@ function whenStarted() {
 
 export type LabAPI = typeof windowAPI;
 const windowAPI = {
+  renderFrame,
   whenStarted,
   switchGame,
   traceCs2,
@@ -1830,6 +1846,17 @@ declare global {
     labProgress?: Omit<Progress, 'type'>;
     labLastScan?: Omit<import('./engine/types.ts').Complete, 'rows'> & { rows?: undefined };
     labDebug: {
+      render: {
+        cpuMs: number;
+        calls: number;
+        triangles: number;
+        geometries: number;
+        textures: number;
+        programs: number;
+        pixelRatio: number;
+        width: number;
+        height: number;
+      };
       map?: string;
       faces?: number;
       triangles: number;

@@ -4,6 +4,66 @@ Experimental branch `cs2-poc`. Run locally; do not deploy the prepared map.
 This branch now runs CS1.6 and CS2 in the original application's shell. Main
 remains unchanged; no merge or deployment is performed.
 
+## Performance and lighting pass
+
+The October 22, 2026 pass compares against `334ac4b` using the same installed
+Inferno data. Timings are local CPU wall time; browser rendering used SwiftShader,
+so these are not hardware-GPU timings or moving-camera FPS claims.
+
+- Isolated textured-map loading on the same prepared package: repeated median
+  **1.812 s → 1.130 s**; cache-busted HTTP median **1.809 s → 1.326 s**. The latter
+  fetched the full compressed response with OS/disk caches already warm; it is
+  not a cold-disk or complete application-startup measurement.
+- Same-view rendering: **196 → 135 draw calls**, preserving all **1,042,107** visible
+  triangles. Sorted attribute-layout keys produce stable material batches.
+- Default scan: first placement pass **2.503 s → 1.798 s**, repeated placement pass
+  **2.312 s → 0.655 s**. Dense spacing-16 scans: **5.064 s → 3.501 s** first pass and
+  **5.253 s → 1.315 s** repeated. Full output bytes and 32 representative complete
+  shots match the baseline, including the default 407 helmet/head penetrations
+  above 100 HP. Scan rules and damage formulas are unchanged by this pass.
+- Render package **292.0 → 270.5 MiB**; encoded texture bytes fall **23.4%** without
+  changing resolution or decoded RGBA. Opaque textures choose the smaller of PNG
+  and verified lossless WebP; alpha textures remain PNG. Browser comparisons
+  verified all 208 WebPs and all 27,669 decoded geometry views exactly.
+- Streaming worker decoding retains at most **2.33 MiB** of measured compressed
+  staging instead of a whole **193 MiB** compressed buffer on the main thread.
+  This is a buffer-accounting result, not a whole-process peak-memory measurement.
+  Estimated texture GPU storage remains about **308 MiB**. Larger batches add
+  about 3.4 MB of retained index/geometry arrays. WebP decoding alone is slower
+  here, but the paired complete map loads show no format-related regression.
+- The BVH cache omits **32.5 MB** of duplicated indices. A bounded per-map placement
+  LRU reuses floor/hull work across scans; target rays are still retraced. A dense
+  cache retained about **5.4 MB** of JS heap in the local GC experiment. Map
+  collision must remain immutable; replace the map or clear its placement cache
+  after any future in-place geometry/flag edits.
+
+GoldSrc now reads original RGB lightmaps and packs a shared atlas for baked
+lighting and shadows. Local Inferno adds one **4 MiB** atlas and about **21 ms** of
+warm parse/build work, with unchanged geometry/draw calls. CS2 uses balanced
+Z-up sky/ground lighting and sunlight; this is not Source 2 baked lighting or
+shadow parity. Neither path adds full-map shadow-map or postprocessing passes.
+Armor/anchor reclassification reuses point GPU buffers, walking has a bounded
+physical-pixel budget, and idle map views do not schedule redraws.
+
+Run `bun run cs2:prepare --render` once to get compact bounds, deduplicated geometry
+and lossless texture packing. Existing packages remain readable with the bounds
+fallback. The current machine's ignored package has already been prepared.
+Main-app and standalone POC Vite caches are separate to avoid outdated optimized
+dependency errors when both previews run.
+
+For reproducible scan comparisons, run from the repository:
+
+```powershell
+$env:CS2_BENCH_BASELINE = '1'
+bun tools/cs2-collision-bench.mjs before
+Remove-Item Env:CS2_BENCH_BASELINE
+bun tools/cs2-collision-bench.mjs after before
+```
+
+The benchmark reconstructs only reference modules under ignored `.local`, checks
+the complete row bytes, and writes timing/hash/memory reports there. Raw map
+exports, before/after screenshots and development measurement reports stay local.
+
 ## Shared application (recommended)
 
 ```powershell

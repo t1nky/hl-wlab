@@ -5,7 +5,7 @@ import type { Plugin } from 'vite';
 
 const local = fileURLToPath(new URL('../.local/cs2/de_inferno/', import.meta.url));
 /** Dev-only, loopback local package route. Never copies assets into build output. */
-export function localCs2(): Plugin {
+export function localCs2(packageRoot = local): Plugin {
   return {
     name: 'local-cs2-package',
     configureServer(server) {
@@ -20,15 +20,15 @@ export function localCs2(): Plugin {
           res.end();
           return;
         }
-        const isRender = /^render\/[a-zA-Z0-9_.-]+\.(gltf|bin|png)$/.test(name);
-        const file = resolve(local, name);
+        const isRender = /^render\/[a-zA-Z0-9_.-]+\.(gltf|bin|png|webp)$/.test(name);
+        const file = resolve(packageRoot, name);
         if (
           (name !== 'map.json' &&
             name !== 'map.cs2map' &&
             name !== 'render.json' &&
             name !== 'player.json' &&
             !isRender) ||
-          !file.startsWith(resolve(local) + sep)
+          !file.startsWith(resolve(packageRoot) + sep)
         ) {
           res.statusCode = 404;
           res.end();
@@ -55,7 +55,9 @@ export function localCs2(): Plugin {
             ? 'application/json'
             : name.endsWith('.png')
               ? 'image/png'
-              : 'application/octet-stream',
+              : name.endsWith('.webp')
+                ? 'image/webp'
+                : 'application/octet-stream',
         );
         res.setHeader('Content-Length', stats.size);
         const stream = createReadStream(file);

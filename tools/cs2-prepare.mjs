@@ -22,6 +22,58 @@ export async function encodeRenderView(source, count, stride, mode) {
   return packed;
 }
 
+/** Share only byte-identical attributes with identical interpretation. This also lets
+ * GLTFLoader reuse complete primitive geometries across repeated static props. */
+export function deduplicateRenderAccessors(gltf, buffers) {
+  const accessors = [],
+    views = [],
+    remap = new Map(),
+    seen = new Map();
+  let savedBytes = 0;
+  for (const [index, accessor] of gltf.accessors.entries()) {
+    const view = gltf.bufferViews[accessor.bufferView];
+    if (accessor.byteOffset || view.byteStride || accessor.sparse)
+      throw Error('Unsupported render accessor layout');
+    const source = buffers[view.buffer].subarray(
+      view.byteOffset || 0,
+      (view.byteOffset || 0) + view.byteLength,
+    );
+    const key = JSON.stringify([
+      accessor.componentType,
+      accessor.count,
+      accessor.type,
+      !!accessor.normalized,
+      accessor.min,
+      accessor.max,
+      createHash('sha256').update(source).digest('hex'),
+    ]);
+    const prior = seen.get(key);
+    if (prior && source.equals(prior.source)) {
+      remap.set(index, prior.index);
+      savedBytes += source.byteLength;
+      continue;
+    }
+    const next = accessors.length;
+    seen.set(key, { source, index: next });
+    remap.set(index, next);
+    accessors.push({ ...accessor, bufferView: views.length });
+    views.push(view);
+  }
+  for (const mesh of gltf.meshes)
+    for (const primitive of mesh.primitives) {
+      primitive.indices = remap.get(primitive.indices);
+      for (const name of Object.keys(primitive.attributes))
+        primitive.attributes[name] = remap.get(primitive.attributes[name]);
+    }
+  gltf.accessors = accessors;
+  gltf.bufferViews = views;
+  return {
+    savedBytes,
+    uniqueAccessors: accessors.length,
+    sharedAccessors: remap.size - accessors.length,
+  };
+}
+
 async function compressRenderPackage() {
   const manifestPath = resolve(output, 'render.json');
   const metadata = JSON.parse(readFileSync(manifestPath, 'utf8'));
@@ -44,7 +96,7 @@ async function compressRenderPackage() {
       remove.push(path);
       return readFileSync(path);
     });
-    decodedBytes += buffers.reduce((sum, buffer) => sum + buffer.length, 0);
+    metadata.geometrySharing = deduplicateRenderAccessors(gltf, buffers);
     const byView = new Map();
     for (const accessor of gltf.accessors) {
       if (accessor.byteOffset) throw Error('Unsupported render accessor offset');
@@ -54,7 +106,8 @@ async function compressRenderPackage() {
       byView.set(accessor.bufferView, accessor);
     }
     const parts = [];
-    let packedBytes = 0;
+    let packedBytes = 0,
+      fallbackBytes = 0;
     for (const [index, view] of gltf.bufferViews.entries()) {
       const accessor = byView.get(index);
       if (!accessor) throw Error('Unused render view survived compaction');
@@ -64,6 +117,11 @@ async function compressRenderPackage() {
         view.byteOffset || 0,
         (view.byteOffset || 0) + view.byteLength,
       );
+      // Required-extension fallback is virtual: compact its offsets too, so loaders
+      // never reserve space for the duplicate accessors removed above.
+      fallbackBytes = Math.ceil(fallbackBytes / 4) * 4;
+      view.byteOffset = fallbackBytes;
+      fallbackBytes += view.byteLength;
       const packed = await encodeRenderView(source, accessor.count, stride, mode);
       view.extensions = {
         EXT_meshopt_compression: {
@@ -83,7 +141,7 @@ async function compressRenderPackage() {
         console.log(`Compressing render views ${index + 1}/${gltf.bufferViews.length}…`);
     }
     const file = chunk.replace('render/', '').replace('.gltf', '-meshopt.bin');
-    const fallbackBytes = gltf.buffers.reduce((sum, buffer) => sum + buffer.byteLength, 0);
+    decodedBytes += fallbackBytes;
     gltf.buffers = [
       { uri: file, byteLength: packedBytes },
       { byteLength: fallbackBytes, extensions: { EXT_meshopt_compression: { fallback: true } } },
@@ -92,6 +150,7 @@ async function compressRenderPackage() {
     gltf.extensionsRequired = [
       ...new Set([...(gltf.extensionsRequired || []), 'EXT_meshopt_compression']),
     ];
+    gltf.extras = { ...gltf.extras, cs2CompactPrimitiveBounds: 1 };
     writeFileSync(resolve(folder, file), Buffer.concat(parts));
     writeFileSync(`${gltfPath}.tmp`, JSON.stringify(gltf));
     renameSync(`${gltfPath}.tmp`, gltfPath);
@@ -114,6 +173,7 @@ async function compressRenderPackage() {
     decodedGeometryBytes: decodedBytes,
     ms: performance.now() - timer,
   };
+  metadata.compactPrimitiveBounds = 1;
   metadata.prepareMs += metadata.compression.ms;
   metadata.packageHash = createHash('sha256').update(JSON.stringify(metadata.files)).digest('hex');
   writeFileSync(`${manifestPath}.tmp`, JSON.stringify(metadata));

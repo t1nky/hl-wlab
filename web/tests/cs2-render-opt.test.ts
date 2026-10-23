@@ -189,6 +189,27 @@ describe('CS2 render optimization correctness', () => {
 const path = fileURLToPath(
   new URL('../../.local/cs2/de_inferno/render/chunk-000.gltf', import.meta.url),
 );
+it.skipIf(!existsSync(path))('actual Inferno retains PNG alpha and verified compact bounds', () => {
+  const gltf = JSON.parse(readFileSync(path, 'utf8'));
+  const manifestPath = fileURLToPath(
+    new URL('../../.local/cs2/de_inferno/render.json', import.meta.url),
+  );
+  const metadata = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  // Old packages remain supported; these guarantees apply to the new preparation format.
+  if (metadata.compactPrimitiveBounds !== 1) return;
+  expect(gltf.extras.cs2CompactPrimitiveBounds).toBe(1);
+  expect(metadata.textureEncoding.pixelRoundTripVerified).toBe(true);
+  let alphaTextures = 0;
+  for (const material of gltf.materials) {
+    if (material.alphaMode === 'OPAQUE' || !material.pbrMetallicRoughness?.baseColorTexture)
+      continue;
+    const index = material.pbrMetallicRoughness.baseColorTexture.index;
+    const image = gltf.images[gltf.textures[index].source];
+    expect(image.uri).toMatch(/\.png$/);
+    alphaTextures++;
+  }
+  expect(alphaTextures).toBeGreaterThan(10);
+});
 it.skipIf(!existsSync(path))(
   'actual Inferno arch overlays retain original installed vertex bounds',
   () => {

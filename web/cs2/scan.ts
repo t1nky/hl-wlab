@@ -8,9 +8,10 @@ import {
   type SelectedSample,
   validateScan,
 } from '../src/games/contracts';
-import { intersectTarget, type TargetPose } from '../src/games/target';
+import type { TargetPose } from '../src/games/target';
 import type { CollisionMap } from './collision';
 import { type DamageWeapon, targetDamage } from './damage';
+import { targetIntersector } from './target-intersection';
 import type { Shot, V3 } from './types';
 
 // [stance, feet xyz, eye z, then damage/status/walls/hitgroup for chest/head/pelvis].
@@ -29,6 +30,36 @@ export interface ScanRequestData {
   target: V3;
   settings: ScanSettings;
   pose?: TargetPose;
+}
+
+interface PlacementColumn {
+  floors: number;
+  rejectedHull: number;
+  origins: { crouched: number; foot: V3 }[];
+}
+// Geometry and player collision flags are immutable for a loaded map. Keep only a bounded
+// LRU of exact XY columns, independent of target pose, weapon, damage view and grid spacing.
+const COLUMN_LIMIT = 16384;
+const placementCaches = new WeakMap<CollisionMap, Map<string, PlacementColumn>>();
+export function clearScanPlacementCache(map: CollisionMap) {
+  placementCaches.delete(map);
+}
+function placementColumn(map: CollisionMap, x: number, y: number): PlacementColumn {
+  const floors = floorCandidates(map, x, y);
+  const column: PlacementColumn = { floors: floors.length, rejectedHull: 0, origins: [] };
+  const seen: number[][] = [[], []];
+  for (const z of floors)
+    for (const crouched of [0, 1]) {
+      const foot = placeHull(map, x, y, z, crouched ? 54 : 72);
+      if (!foot) {
+        column.rejectedHull++;
+        continue;
+      }
+      if (seen[crouched].some((v) => Math.abs(v - foot[2]) < 1)) continue;
+      seen[crouched].push(foot[2]);
+      column.origins.push({ crouched, foot });
+    }
+  return column;
 }
 
 export function floorCandidates(map: CollisionMap, x: number, y: number): number[] {
@@ -86,7 +117,16 @@ export async function scanMap(
     standing: 0,
     crouching: 0,
   };
-  const values: number[] = [];
+  let cache = placementCaches.get(map);
+  if (!cache) {
+    cache = new Map();
+    placementCaches.set(map, cache);
+  }
+  let cacheHits = 0,
+    cacheMisses = 0;
+  const intersect = request.pose ? targetIntersector(request.pose) : undefined;
+  let rows = new Float32Array(CS2_ROW * 4096),
+    used = 0;
   let yielded = performance.now();
   for (let y = -n; y <= n && !cancelled(); y++)
     for (let x = -n; x <= n && !cancelled(); x++) {
@@ -94,48 +134,56 @@ export async function scanMap(
       if ((x * spacing) ** 2 + (y * spacing) ** 2 > radius ** 2) continue;
       const fx = request.target[0] + x * spacing,
         fy = request.target[1] + y * spacing;
-      const floors = floorCandidates(map, fx, fy);
-      if (!floors.length) stats.noFloor++;
-      stats.floors += floors.length;
-      const seen: number[][] = [[], []];
-      for (const z of floors)
-        for (const crouched of [0, 1]) {
-          const foot = placeHull(map, fx, fy, z, crouched ? 54 : 72);
-          if (!foot) {
-            stats.rejectedHull++;
+      const key = `${fx},${fy}`;
+      let column = cache.get(key);
+      if (column) {
+        cacheHits++;
+        cache.delete(key);
+      } else {
+        cacheMisses++;
+        column = placementColumn(map, fx, fy);
+      }
+      cache.set(key, column);
+      if (cache.size > COLUMN_LIMIT) cache.delete(cache.keys().next().value as string);
+      if (!column.floors) stats.noFloor++;
+      stats.floors += column.floors;
+      stats.rejectedHull += column.rejectedHull;
+      for (const { crouched, foot } of column.origins) {
+        const eye: V3 = [foot[0], foot[1], foot[2] + (crouched ? 46 : 64)];
+        const anchors = request.pose?.aims ?? [request.target];
+        const row = [crouched, ...foot, eye[2]];
+        for (let anchor = 0; anchor < 3; anchor++) {
+          if (!request.pose && anchor) {
+            row.push(...row.slice(5, 9));
             continue;
           }
-          if (seen[crouched].some((v) => Math.abs(v - foot[2]) < 1)) continue;
-          seen[crouched].push(foot[2]);
-          const eye: V3 = [foot[0], foot[1], foot[2] + (crouched ? 46 : 64)];
-          const anchors = request.pose?.aims ?? [request.target];
-          const row = [crouched, ...foot, eye[2]];
-          for (let anchor = 0; anchor < 3; anchor++) {
-            if (!request.pose && anchor) {
-              row.push(...row.slice(5, 9));
-              continue;
-            }
-            const aim = anchors[anchor] ?? anchors[0];
-            const hit = request.pose ? intersectTarget(eye, aim, request.pose) : null;
-            if (request.pose && (!hit || hit.distance < 0.1)) {
-              row.push(0, 2, 0, 0);
-              continue;
-            }
-            if (new Vector3(...eye).distanceTo(new Vector3(...aim)) < 0.1) {
-              row.push(0, 2, 0, 0);
-              continue;
-            }
-            const shot = map.trace(eye, hit?.point ?? aim);
-            row.push(
-              shot.damage ?? -1,
-              statuses.indexOf(shot.status),
-              shot.spans.length,
-              hit?.group ?? 0,
-            );
+          const aim = anchors[anchor] ?? anchors[0];
+          const hit = intersect ? intersect(eye, aim) : null;
+          if (request.pose && (!hit || hit.distance < 0.1)) {
+            row.push(0, 2, 0, 0);
+            continue;
           }
-          values.push(...row);
-          stats[crouched ? 'crouching' : 'standing']++;
+          if (new Vector3(...eye).distanceTo(new Vector3(...aim)) < 0.1) {
+            row.push(0, 2, 0, 0);
+            continue;
+          }
+          const shot = map.trace(eye, hit?.point ?? aim);
+          row.push(
+            shot.damage ?? -1,
+            statuses.indexOf(shot.status),
+            shot.spans.length,
+            hit?.group ?? 0,
+          );
         }
+        if (used + CS2_ROW > rows.length) {
+          const expanded = new Float32Array(rows.length * 2);
+          expanded.set(rows);
+          rows = expanded;
+        }
+        rows.set(row, used);
+        used += CS2_ROW;
+        stats[crouched ? 'crouching' : 'standing']++;
+      }
       if (performance.now() - yielded > 16) {
         progress({ ...stats });
         await new Promise((r) => setTimeout(r, 0));
@@ -143,7 +191,17 @@ export async function scanMap(
       }
     }
   progress({ ...stats });
-  return { rows: Float32Array.from(values), stats, cancelled: cancelled() };
+  return {
+    rows: rows.slice(0, used),
+    stats,
+    cancelled: cancelled(),
+    placementCache: {
+      hits: cacheHits,
+      misses: cacheMisses,
+      entries: cache.size,
+      limit: COLUMN_LIMIT,
+    },
+  };
 }
 export function cs2Sample(
   rows: Float32Array,

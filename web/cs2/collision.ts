@@ -9,6 +9,7 @@ import {
 } from 'three';
 import { CENTER, MeshBVH, type SerializedBVH } from 'three-mesh-bvh';
 import { penetrationLoss, penetrationParameters } from './damage';
+import { collisionRaycaster } from './trace-ray';
 import { EPS, type MapData, type Metadata, required, type Shot, type Span, type V3 } from './types';
 
 export interface Crossing {
@@ -22,6 +23,18 @@ export interface PlayerSweep {
   normal: V3;
 }
 
+export interface CollisionCache extends SerializedBVH {
+  // Exact position bounds, rather than the BVH's padded float32 node bounds.
+  bounds?: number[];
+}
+
+// A sweep invokes triangles synchronously. Reuse its SAT workspace instead of allocating
+// vectors/arrays for every candidate triangle (including the many rejected floor faces).
+const sweepEdges = [new Vector3(), new Vector3(), new Vector3()];
+const boxAxes = [new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(0, 0, 1)];
+const sweepAxes = [...boxAxes, ...Array.from({ length: 10 }, () => new Vector3())];
+const sweepNormal = new Vector3();
+
 // Continuous separating-axis test: moving axis-aligned player box versus a triangle.
 // The 13 axes are the box axes, triangle normal, and box-axis/edge cross products.
 // Unlike sampling rays or destination overlap, this cannot skip a thin wall between ticks.
@@ -31,26 +44,25 @@ function sweepTriangle(
   half: Vector3,
   delta: Vector3,
 ): PlayerSweep | null {
-  const edges = [
-    new Vector3().subVectors(triangle.b, triangle.a),
-    new Vector3().subVectors(triangle.c, triangle.b),
-    new Vector3().subVectors(triangle.a, triangle.c),
-  ];
-  const axes = [new Vector3(1, 0, 0), new Vector3(0, 1, 0), new Vector3(0, 0, 1)];
-  const candidates = [...axes, new Vector3().crossVectors(edges[0], edges[1])];
-  for (const edge of edges)
-    for (const axis of axes) candidates.push(new Vector3().crossVectors(edge, axis));
+  sweepEdges[0].subVectors(triangle.b, triangle.a);
+  sweepEdges[1].subVectors(triangle.c, triangle.b);
+  sweepEdges[2].subVectors(triangle.a, triangle.c);
+  sweepAxes[3].crossVectors(sweepEdges[0], sweepEdges[1]);
+  let next = 4;
+  for (const edge of sweepEdges)
+    for (const axis of boxAxes) sweepAxes[next++].crossVectors(edge, axis);
   let enter = -Infinity;
   let exit = Infinity;
-  let normal = new Vector3();
-  for (const axis of candidates) {
+  for (const axis of sweepAxes) {
     if (axis.lengthSq() < 1e-14) continue;
     axis.normalize();
-    const projections = [triangle.a.dot(axis), triangle.b.dot(axis), triangle.c.dot(axis)];
+    const a = triangle.a.dot(axis),
+      b = triangle.b.dot(axis),
+      c = triangle.c.dot(axis);
     const radius =
       Math.abs(axis.x) * half.x + Math.abs(axis.y) * half.y + Math.abs(axis.z) * half.z;
-    const low = Math.min(...projections) - radius - center.dot(axis);
-    const high = Math.max(...projections) + radius - center.dot(axis);
+    const low = Math.min(a, b, c) - radius - center.dot(axis);
+    const high = Math.max(a, b, c) + radius - center.dot(axis);
     const speed = delta.dot(axis);
     if (Math.abs(speed) < 1e-10) {
       // A merely touching, parallel face must not stop sliding along a floor/wall.
@@ -61,14 +73,14 @@ function sweepTriangle(
     const last = Math.max(low / speed, high / speed);
     if (first > enter) {
       enter = first;
-      normal = axis.clone().multiplyScalar(speed > 0 ? -1 : 1);
+      sweepNormal.copy(axis).multiplyScalar(speed > 0 ? -1 : 1);
     }
     exit = Math.min(exit, last);
     if (enter > exit + 1e-8) return null;
   }
   // Pre-existing overlap is rejected at placement, not pushed through arbitrary walls.
   if (enter < -1e-7 || enter > 1 || exit < 0 || !Number.isFinite(enter)) return null;
-  return { fraction: Math.max(0, enter), normal: normal.toArray() as V3 };
+  return { fraction: Math.max(0, enter), normal: sweepNormal.toArray() as V3 };
 }
 // Closed outward-wound meshes alternate entry/front and exit/back faces. Never invent an exit.
 export function meshSpans(
@@ -140,20 +152,26 @@ export function hullSpan(
 // Union overlapping solids into non-overlapping intervals; choose the lower distance modifier
 // conservatively, rather than charging overlapping world/prop volumes twice.
 export function unionSpans(spans: Span[], metadata: Metadata): Span[] {
+  if (!spans.length) return [];
+  if (spans.length === 1) return spans[0].exit - spans[0].enter >= EPS ? [{ ...spans[0] }] : [];
   const points = [...new Set(spans.flatMap((s) => [s.enter, s.exit]))].sort((a, b) => a - b);
   const result: Span[] = [];
   for (let i = 0; i < points.length - 1; i++) {
     const a = points[i],
       b = points[i + 1];
     if (b - a < EPS) continue;
-    const active = spans.filter((s) => s.enter <= a + 1e-6 && s.exit >= b - 1e-6);
-    active.sort(
-      (x, y) =>
-        (metadata.materials[x.material].distanceModifier ?? -1) -
-        (metadata.materials[y.material].distanceModifier ?? -1),
-    );
-    if (!active.length) continue;
-    const winner = active[0];
+    // Stable minimum: equal modifiers retain the first span, exactly as stable sort did.
+    let winner: Span | undefined;
+    let modifier = Infinity;
+    for (const span of spans) {
+      if (span.enter > a + 1e-6 || span.exit < b - 1e-6) continue;
+      const candidate = metadata.materials[span.material].distanceModifier ?? -1;
+      if (!winner || candidate < modifier) {
+        winner = span;
+        modifier = candidate;
+      }
+    }
+    if (!winner) continue;
     const previous = result.at(-1);
     if (
       previous &&
@@ -242,7 +260,8 @@ export class CollisionMap {
   readonly far: number;
   readonly data: MapData;
   readonly metadata: Metadata;
-  constructor(data: MapData, metadata: Metadata, cached?: SerializedBVH) {
+  private readonly rayCrossings: ReturnType<typeof collisionRaycaster>;
+  constructor(data: MapData, metadata: Metadata, cached?: CollisionCache) {
     this.data = data;
     this.metadata = metadata;
     this.geometry = new BufferGeometry();
@@ -251,8 +270,14 @@ export class CollisionMap {
     this.bvh = cached
       ? MeshBVH.deserialize(cached, this.geometry, { setIndex: false })
       : new MeshBVH(this.geometry, { strategy: CENTER, indirect: true, maxLeafSize: 8 });
-    this.geometry.computeBoundingBox();
+    if (cached?.bounds?.length === 6 && cached.bounds.every(Number.isFinite))
+      this.geometry.boundingBox = new Box3(
+        new Vector3().fromArray(cached.bounds),
+        new Vector3().fromArray(cached.bounds, 3),
+      );
+    else this.geometry.computeBoundingBox();
     this.far = required(this.geometry.boundingBox).getSize(new Vector3()).length() * 2;
+    this.rayCrossings = collisionRaycaster(this.bvh, data, metadata);
   }
   hits(source: Vector3, direction: Vector3, kind: 'bullet' | 'player', far = this.far) {
     return this.bvh
@@ -285,36 +310,37 @@ export class CollisionMap {
     const distance = direction.length();
     if (distance < EPS) throw Error('Source and target must be different');
     direction.normalize();
-    const hits = this.hits(origin, direction, kind, Math.max(this.far, distance + this.far));
+    const hits = this.rayCrossings(
+      origin,
+      direction,
+      kind,
+      Math.max(this.far, distance + this.far),
+    );
     const contacts: Shot['contacts'] = [];
+    const lastContact = new Map<number, number>();
     for (const h of hits
       .filter((h) => h.distance <= distance)
       .sort((a, b) => a.distance - b.distance)) {
-      const tri = required(h.faceIndex),
-        shape = this.data.shapes[tri];
-      if (contacts.some((c) => c.shape === shape && Math.abs(c.distance - h.distance) < EPS))
-        continue;
+      const shape = h.shape;
+      const previous = lastContact.get(shape);
+      if (previous != null && Math.abs(previous - h.distance) < EPS) continue;
+      lastContact.set(shape, h.distance);
       contacts.push({
         distance: h.distance,
-        material: this.data.materials[tri],
+        material: h.material,
         shape,
-        facing: required(h.face).normal.dot(direction),
+        facing: h.facing,
       });
     }
     const candidates = new Map<number, Crossing[]>();
     for (const h of hits) {
-      const tri = required(h.faceIndex),
-        shape = this.data.shapes[tri];
+      const shape = h.shape;
       let list = candidates.get(shape);
       if (!list) {
         list = [];
         candidates.set(shape, list);
       }
-      list.push({
-        distance: h.distance,
-        facing: required(h.face).normal.dot(direction),
-        material: this.data.materials[tri],
-      });
+      list.push(h);
     }
     const spans: Span[] = [],
       issues: string[] = [];
@@ -426,6 +452,14 @@ export class CollisionMap {
     return !this.trace(center, [center[0], center[1], center[2] + 1], 'player').spans.some(
       (span) => span.startInside,
     );
+  }
+  cacheSnapshot(): CollisionCache {
+    const bounds = required(this.geometry.boundingBox);
+    return {
+      ...MeshBVH.serialize(this.bvh, { cloneBuffers: false }),
+      index: new Uint32Array(0),
+      bounds: [...bounds.min.toArray(), ...bounds.max.toArray()],
+    };
   }
   dispose() {
     this.geometry.dispose();

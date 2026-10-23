@@ -1,5 +1,40 @@
 import * as THREE from 'three';
 
+/** Keep GPU allocations and the spatial bounds when only damage/aim classification changes. */
+export function updatePointGeometry(
+  geometry: THREE.BufferGeometry,
+  data: { positions: Float32Array; hp: Float32Array; kind: Float32Array },
+  positionsChanged = true,
+) {
+  const position = geometry.getAttribute('position');
+  if (!position || position.array.length !== data.positions.length) {
+    geometry.dispose();
+    geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(data.positions, 3));
+    geometry.setAttribute(
+      'hp',
+      new THREE.BufferAttribute(data.hp, 1).setUsage(THREE.DynamicDrawUsage),
+    );
+    geometry.setAttribute(
+      'kind',
+      new THREE.BufferAttribute(data.kind, 1).setUsage(THREE.DynamicDrawUsage),
+    );
+    geometry.computeBoundingSphere();
+    return geometry;
+  }
+  if (positionsChanged) {
+    (position.array as Float32Array).set(data.positions);
+    position.needsUpdate = true;
+    geometry.computeBoundingSphere();
+  }
+  for (const name of ['hp', 'kind'] as const) {
+    const attribute = geometry.getAttribute(name);
+    (attribute.array as Float32Array).set(data[name]);
+    attribute.needsUpdate = true;
+  }
+  return geometry;
+}
+
 export function createPointMaterial(colors: THREE.Color[]) {
   return new THREE.ShaderMaterial({
     clipping: true,

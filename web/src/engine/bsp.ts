@@ -122,7 +122,7 @@ export function readBSP(buffer: ArrayBuffer, { pixels = true } = {}): BSP {
         so = f(ti + 12),
         to = f(ti + 28),
         points = [],
-        uv = [];
+        uv: number[][] = [];
       if (ne < 3 || ne > 256) throw Error('Invalid face edge count');
       for (let k = 0; k < ne; k++) {
         const se = i(range(13, (edge + k) * 4, 4)),
@@ -136,7 +136,37 @@ export function readBSP(buffer: ArrayBuffer, { pixels = true } = {}): BSP {
           pos.reduce((a, x, c) => a + x * tv[c], to),
         ]);
       }
-      faces.push({ index: j, brush: b.index, normal, texture, points, uv });
+      let lightmap: Face['lightmap'];
+      // GoldSrc dface_t has four style bytes followed by an RGB lighting-lump
+      // offset. Extents come from the untransformed texinfo axes, at 16 texels
+      // per luxel. Scan-only readers never decode or retain lighting views.
+      const lightOffset = i(p + 16);
+      if (pixels && l[8].n && lightOffset >= 0 && !(i(ti + 36) & 1)) {
+        const mins: [number, number] = [0, 1].map((axis) =>
+          Math.floor(Math.min(...uv.map((st) => st[axis])) / 16),
+        ) as [number, number];
+        const [width, height] = [0, 1].map(
+          (axis) => Math.ceil(Math.max(...uv.map((st) => st[axis])) / 16) - mins[axis] + 1,
+        );
+        if (![width, height].every((n) => Number.isSafeInteger(n) && n > 0 && n <= 4096))
+          throw Error('Invalid face lightmap extents');
+        const styles = [];
+        for (let k = 0; k < 4 && u[p + 12 + k] !== 255; k++) styles.push(u[p + 12 + k]);
+        if (styles.length) {
+          const bytes = width * height * 3 * styles.length;
+          const start = range(8, lightOffset, bytes);
+          lightmap = { mins, width, height, styles, samples: u.subarray(start, start + bytes) };
+        }
+      }
+      faces.push({
+        index: j,
+        brush: b.index,
+        normal,
+        texture,
+        points,
+        uv,
+        ...(lightmap ? { lightmap } : {}),
+      });
     }
   }
   return {

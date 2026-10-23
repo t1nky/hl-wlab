@@ -93,7 +93,12 @@ test('readBSP and flat-surface candidate vectors retain the original bit pattern
   const buffer = Uint8Array.from(readFileSync(path('../assets/de_inferno.bsp'))).buffer;
   const current = readBSP(buffer),
     original = baseline.readBSP(buffer);
-  assert.deepStrictEqual(current, original);
+  // Baked lightmaps add display-only metadata. Every pre-existing field and all
+  // scan-only geometry must still retain the original bit patterns.
+  assert.deepStrictEqual(
+    { ...current, faces: current.faces.map(({ lightmap: _, ...face }) => face) },
+    original,
+  );
   const geometry = readBSP(buffer, { pixels: false });
   assert.deepStrictEqual(geometry.faces, original.faces);
   assert.deepStrictEqual(

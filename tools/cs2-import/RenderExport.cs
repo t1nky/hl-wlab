@@ -200,8 +200,21 @@ internal static class RenderExport
                             bitmap.Pixels = pixels;
                         }
                         var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(key)))[..20];
-                        var file = "tex-" + hash + ".png";
-                        using var encoded = bitmap.Encode(SKEncodedImageFormat.Png, 100);
+                        // Opaque colors can use native browser lossless WebP. Keep alpha
+                        // textures as PNG: WebP encoders may discard RGB below zero alpha.
+                        // Decode and compare every selected image before publishing it.
+                        using var png = bitmap.Encode(SKEncodedImageFormat.Png, 100);
+                        using var pixmap = bitmap.PeekPixels();
+                        using var webp = !keepAlpha ? pixmap.Encode(new SKWebpEncoderOptions(SKWebpEncoderCompression.Lossless, 75)) : null;
+                        var useWebp = webp != null && webp.Size < png.Size;
+                        if (useWebp) {
+                            using var restored = SKBitmap.Decode(webp!);
+                            if (restored.Width != bitmap.Width || restored.Height != bitmap.Height ||
+                                !restored.Pixels.AsSpan().SequenceEqual(bitmap.Pixels))
+                                throw new InvalidDataException("Lossless texture round-trip failed: " + texturePath);
+                        }
+                        var file = "tex-" + hash + (useWebp ? ".webp" : ".png");
+                        var encoded = useWebp ? webp! : png;
                         using (var stream = File.Create(Path.Combine(folder, file))) encoded.SaveTo(stream);
                         texture = new TextureInfo(file, bitmap.Width, bitmap.Height, new FileInfo(Path.Combine(folder, file)).Length);
                         textures[key] = texture;
@@ -276,6 +289,8 @@ internal static class RenderExport
             prepareMs = timer.Elapsed.TotalMilliseconds, chunks, gltfToSource, textureMaxSize = TextureSize,
             meshCount, primitives, triangleCount, texturedTriangleCount, materialCount, excludedLods, textureCount = textures.Count,
             maskedTintMaterials, textureBytes = textures.Values.Sum(t => t.Bytes),
+            textureEncoding = new { opaque = "smallest of PNG / verified lossless WebP", alpha = "PNG", pixelRoundTripVerified = true,
+                webpCount = textures.Values.Count(t => t.File.EndsWith(".webp")) },
             estimatedTextureGpuBytes = textures.Values.Sum(t => (long)t.Width * t.Height * 4 * 4 / 3),
             totalBytes = files.Sum(f => f.bytes), files,
             warnings = warnings.Concat(new[] {

@@ -33,6 +33,14 @@ export interface Face {
   texture: number;
   points: Vector[];
   uv: number[][];
+  /** Display-only RGB irradiance, one 16-texel luxel grid per light style. */
+  lightmap?: {
+    mins: [number, number];
+    width: number;
+    height: number;
+    styles: number[];
+    samples: Uint8Array<ArrayBuffer>;
+  };
 }
 export interface BSP {
   buffer: ArrayBuffer;

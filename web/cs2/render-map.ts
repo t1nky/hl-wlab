@@ -2,7 +2,7 @@ import {
   BatchedMesh,
   Box3,
   BufferAttribute,
-  type BufferGeometry,
+  BufferGeometry,
   Group,
   LoadingManager,
   type Material,
@@ -16,8 +16,10 @@ import {
 } from 'three';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { batchStaticMap } from './render-batches';
+import { type batchStaticMap, batchStaticMapAsync } from './render-batches';
+import { decodeRenderViews, type RenderDecodeTimings } from './render-decode';
 import { type Cs2Material, diffuseMaterial } from './render-materials';
+import { yieldRenderTask } from './render-schedule';
 
 let decoderWorkersStarted = false;
 
@@ -38,8 +40,17 @@ export interface RenderMetadata {
   estimatedTextureGpuBytes: number;
   totalBytes: number;
   warnings: string[];
-  runtimeBounds?: { geometryCount: number; shrunkCount: number; ms: number };
+  compactPrimitiveBounds?: number;
+  packageHash?: string;
+  runtimeBounds?: {
+    geometryCount: number;
+    shrunkCount: number;
+    precomputedCount: number;
+    ms: number;
+  };
   runtimeBatches?: ReturnType<typeof batchStaticMap>;
+  runtimeLoad?: { resourcesMs: number; materialsMs: number; totalMs: number };
+  runtimeDecode?: RenderDecodeTimings[];
 }
 
 export interface RenderMap {
@@ -128,6 +139,7 @@ export async function loadRenderMap(
   } = {},
 ): Promise<RenderMap> {
   const { clippingPlanes = [], onProgress, signal } = options;
+  const started = performance.now();
   onProgress?.('Reading private textured-map manifest…');
   const response = await fetch('/local/render.json', { signal, cache: 'no-store' });
   if (!response.ok)
@@ -147,24 +159,85 @@ export async function loadRenderMap(
   group.matrixAutoUpdate = false;
   group.matrix.copy(sourceTransform(metadata.gltfToSource));
   const manager = new LoadingManager();
+  // The manifest is always revalidated; dependent resources belong to that exact package.
+  // A rebuild cannot accidentally reuse a prior chunk or ImageBitmap cache entry.
+  const version = `${metadata.fingerprint}-${metadata.packageHash ?? ''}`;
+  manager.setURLModifier(
+    (url) => `${url}${url.includes('?') ? '&' : '?'}v=${encodeURIComponent(version)}`,
+  );
   manager.onProgress = (_url, loaded, total) =>
     onProgress?.(`Loading textured map resources ${loaded}/${total}…`);
   const loader = new GLTFLoader(manager);
-  if (!decoderWorkersStarted && typeof Worker !== 'undefined') {
-    // Three 0.170 ships the worker API but its older ambient declaration omits it.
-    (MeshoptDecoder as typeof MeshoptDecoder & { useWorkers(count: number): void }).useWorkers(2);
-    decoderWorkersStarted = true;
-  }
+  let chunkUrl = '';
+  const decodes: RenderDecodeTimings[] = [];
+  loader.register((parser) => {
+    const views = parser.json.bufferViews ?? [];
+    const supported =
+      typeof Worker !== 'undefined' &&
+      views.length > 0 &&
+      views.every(
+        (view: { extensions?: { EXT_meshopt_compression?: unknown } }) =>
+          view.extensions?.EXT_meshopt_compression,
+      );
+    if (!supported && !decoderWorkersStarted && typeof Worker !== 'undefined') {
+      // Retain the bundled path for older or mixed-layout packages.
+      (MeshoptDecoder as typeof MeshoptDecoder & { useWorkers(count: number): void }).useWorkers(2);
+      decoderWorkersStarted = true;
+    }
+    let pending: ReturnType<typeof decodeRenderViews> | undefined;
+    return {
+      // Overrides only the bundled meshopt extension, using the same bundled decoder.
+      name: supported ? 'EXT_meshopt_compression' : 'CS2_unused_decoder',
+      loadBufferView(index: number) {
+        if (!supported) return null;
+        pending ??= decodeRenderViews(parser.json.buffers, views, chunkUrl, version, signal).then(
+          (result) => {
+            decodes.push(result.timings);
+            return result;
+          },
+        );
+        return pending.then((result) => result.views[index]);
+      },
+    };
+  });
+  loader.register((parser) => {
+    // Layer-only images are absent from glTF's standard material dependencies.
+    // Start them during root loading, instead of a serial waterfall after geometry decode.
+    const pending: Promise<unknown>[] = [];
+    return {
+      name: 'CS2_render_layers',
+      beforeRoot() {
+        const indices = new Set<number>();
+        for (const material of parser.json.materials ?? [])
+          for (const layer of material.extras?.cs2?.layers ?? []) indices.add(layer.texture);
+        for (const index of indices) {
+          const request = parser.getDependency('texture', index);
+          // Attach a handler immediately; afterRoot propagates the actual error.
+          void request.catch(() => undefined);
+          pending.push(request);
+        }
+        return null;
+      },
+      async afterRoot() {
+        await Promise.all(pending);
+      },
+    };
+  });
   loader.setMeshoptDecoder(MeshoptDecoder);
   const dispose = () => disposeRenderGroup(group);
-  const bounds = { geometryCount: 0, shrunkCount: 0, ms: 0 };
+  const bounds = { geometryCount: 0, shrunkCount: 0, precomputedCount: 0, ms: 0 };
+  const timings = { resourcesMs: 0, materialsMs: 0, totalMs: 0 };
+  const pendingMaterials = new Set<Material>();
   try {
     for (const [index, chunk] of metadata.chunks.entries()) {
       if (!/^render\/[a-zA-Z0-9_.-]+\.gltf$/.test(chunk))
         throw Error('Invalid private render chunk path');
       signal?.throwIfAborted();
       onProgress?.(`Loading render chunk ${index + 1}/${metadata.chunks.length}…`);
+      chunkUrl = new URL(`/local/${chunk}`, window.location.href).href;
+      const resourcesStart = performance.now();
       const gltf = await loader.loadAsync(`/local/${chunk}`);
+      timings.resourcesMs += performance.now() - resourcesStart;
       group.add(gltf.scene);
       signal?.throwIfAborted();
       // The POC has explicit simple lighting. Do not also apply exported Source light entities.
@@ -174,11 +247,42 @@ export async function loadRenderMap(
         if (object instanceof Mesh) meshes.push(object);
       });
       const converted = new Map<Material, Material>();
+      const materialsStart = performance.now();
+      const sources = new Set(
+        meshes.flatMap((object) =>
+          Array.isArray(object.material) ? object.material : [object.material],
+        ),
+      );
+      let yieldAt = performance.now() + 8;
+      for (const source of sources) {
+        const settings = source.userData.cs2 as Cs2Material | undefined;
+        const textures = await Promise.all(
+          (settings?.layers ?? []).map(
+            (layer) => gltf.parser.getDependency('texture', layer.texture) as Promise<Texture>,
+          ),
+        );
+        if (textures.some((texture) => !texture)) throw Error('Missing render layer texture');
+        const material = diffuseMaterial(source as MeshStandardMaterial, settings, textures);
+        pendingMaterials.add(material);
+        material.clippingPlanes = clippingPlanes;
+        converted.set(source, material);
+        if (performance.now() >= yieldAt) {
+          await yieldRenderTask();
+          signal?.throwIfAborted();
+          yieldAt = performance.now() + 8;
+        }
+      }
       for (const object of meshes) {
         if (!bounded.has(object.geometry)) {
           const started = performance.now();
           const oldRadius = object.geometry.boundingSphere?.radius ?? Infinity;
-          tightenPrimitiveBounds(object.geometry);
+          if (
+            metadata.compactPrimitiveBounds === 1 &&
+            object.geometry.boundingBox &&
+            object.geometry.boundingSphere
+          )
+            bounds.precomputedCount++;
+          else tightenPrimitiveBounds(object.geometry);
           bounds.geometryCount++;
           if ((object.geometry.boundingSphere?.radius ?? Infinity) < oldRadius * 0.99)
             bounds.shrunkCount++;
@@ -187,20 +291,9 @@ export async function loadRenderMap(
         }
         const materials: Material[] = [];
         for (const source of Array.isArray(object.material) ? object.material : [object.material]) {
-          let material = converted.get(source);
+          const material = converted.get(source);
           const settings = source.userData.cs2 as Cs2Material | undefined;
-          if (!material) {
-            const textures = await Promise.all(
-              (settings?.layers ?? []).map(
-                (layer) => gltf.parser.getDependency('texture', layer.texture) as Promise<Texture>,
-              ),
-            );
-            material = diffuseMaterial(source as MeshStandardMaterial, settings, textures);
-            converted.set(source, material);
-            source.dispose();
-          }
-          material.clippingPlanes = clippingPlanes;
-          material.needsUpdate = true;
+          if (!material) throw Error('Missing converted render material');
           materials.push(material);
           if (settings?.layers.length) {
             const blend = object.geometry.getAttribute('_texcoord_4');
@@ -216,16 +309,30 @@ export async function loadRenderMap(
           }
         }
         object.material = Array.isArray(object.material) ? materials : materials[0];
+        if (performance.now() >= yieldAt) {
+          await yieldRenderTask();
+          signal?.throwIfAborted();
+          yieldAt = performance.now() + 8;
+        }
       }
+      for (const source of sources) source.dispose();
+      pendingMaterials.clear();
+      timings.materialsMs += performance.now() - materialsStart;
     }
     group.updateMatrixWorld(true);
     metadata.runtimeBounds = bounds;
-    if (options.batch !== false) metadata.runtimeBatches = batchStaticMap(group);
+    if (options.batch !== false) metadata.runtimeBatches = await batchStaticMapAsync(group, signal);
+    timings.totalMs = performance.now() - started;
+    metadata.runtimeLoad = timings;
+    metadata.runtimeDecode = decodes;
     onProgress?.(
       `${metadata.textureCount} base textures · ${(metadata.totalBytes / 1048576).toFixed(1)} MiB map package`,
     );
     return { group, metadata, dispose };
   } catch (error) {
+    // A cancellation can happen between conversion and attachment to a mesh.
+    // Include those materials in the same deduplicated disposal traversal.
+    if (pendingMaterials.size) group.add(new Mesh(new BufferGeometry(), [...pendingMaterials]));
     dispose();
     throw error;
   }

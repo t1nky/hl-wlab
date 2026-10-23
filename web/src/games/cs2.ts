@@ -4,6 +4,7 @@ import type { WalkState } from '../../cs2/movement';
 import { loadRenderMap, type RenderMap } from '../../cs2/render-map';
 import { CS2_ROW, classifyCs2, cs2Sample, type ScanStats } from '../../cs2/scan';
 import { type Metadata, required, type Shot, type V3 } from '../../cs2/types';
+import { cs2Lighting } from '../render/lighting';
 import {
   type AnalysisProgress,
   CS2,
@@ -109,9 +110,7 @@ export class Cs2Game implements GameAnalysis {
       },
       step: (dt: number, input: MoveInput, yaw: number) => this.movement.step(dt, input, yaw),
     };
-    const sun = new THREE.DirectionalLight(0xffffff, 2);
-    sun.position.set(-1000, -1000, 4000);
-    this.group.add(new THREE.AmbientLight(0xffffff, 1.6), sun);
+    this.group.add(...cs2Lighting());
   }
   private request(op: object): Promise<Reply> {
     if (this.disposed) return Promise.reject(Error('CS2 map closed'));

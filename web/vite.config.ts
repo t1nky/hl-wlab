@@ -57,6 +57,7 @@ function offlineShell(): Plugin {
 
 export default defineConfig({
   root,
+  cacheDir: fileURLToPath(new URL('../node_modules/.vite-wlab-app', import.meta.url)),
   base: process.env.WB_BASE_PATH || '/',
   publicDir: 'public',
   plugins: [offlineShell(), localCs2()],

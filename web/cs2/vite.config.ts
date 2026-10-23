@@ -5,6 +5,7 @@ import { localCs2 } from '../local-cs2.ts';
 const root = fileURLToPath(new URL('.', import.meta.url));
 export default defineConfig({
   root,
+  cacheDir: fileURLToPath(new URL('../../node_modules/.vite-wlab-cs2', import.meta.url)),
   publicDir: false,
   server: {
     host: '127.0.0.1',
