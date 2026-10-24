@@ -6,6 +6,26 @@ remains unchanged; no merge or deployment is performed.
 
 ## Frame pacing and first-view stalls
 
+Slow scheduled frames now log automatically to the browser console under
+`[Wallbang performance]`: gaps, queue/wake delays or CPU frame work above
+18.18 ms (the 55 FPS diagnostic threshold). Reports include the wake/active
+phase, preceding idle duration, burst length, CPU render/frame time, map,
+camera, drawing-buffer size, draw/triangle counts and recent activity. Repeated
+slow frames are grouped once per second with a count and the worst frame;
+the first is reported immediately. This adds no rendering loop or GPU queries.
+**View → Performance** additionally supplies the last sampled GPU time/age
+and cached scene-storage estimate. A last GPU sample is not the failing frame's
+GPU measurement. Hidden-tab/context resets and disposal clear diagnostic state
+and pending timers.
+
+The HUD now measures cadence across active intervals rather than spanning two
+short movement bursts separated by demand-driven idle. Pauses over 20 ms before
+a new request break cadence; rapid pointer-driven frames keep their cadence.
+A single isolated redraw has no meaningful FPS estimate. With the performance
+panel enabled, an apparent low sample caused by a crossed idle gap is logged
+separately as `idle gap excluded from FPS`, including both the span and active
+rates. Actual stalls while a next frame is already requested remain counted.
+
 Navigation uses **C** for held crouch or Fly descent and **V** to toggle crouch
 in the shared app. Ctrl is not a movement binding: Chrome's Ctrl+W closes its
 tab, and Ctrl+Shift+W closes its window. Descending while flying forward with

@@ -86,7 +86,15 @@ const scene = new THREE.Scene(),
   camera = new THREE.PerspectiveCamera(70, 1, 1, 40000),
   viewTarget = new THREE.Vector3(1000, 250, 250);
 const cs2WalkFog = new THREE.Fog(CS2_BACKGROUND, 6553.6, 8192);
-const performanceHUD = createPerformanceHUD(renderer, scene, $('viewport'));
+const performanceHUD = createPerformanceHUD(renderer, scene, $('viewport'), () => ({
+  game: analysis().definition.id,
+  map: cs2?.mapId ?? assetSet.mapName,
+  mode,
+  loading: loadingScene,
+  scanning: busy,
+  controlsActive: ownsNavigation(),
+  camera: camera.position.toArray(),
+}));
 import.meta.hot?.dispose(() => performanceHUD.dispose());
 const glContext = renderer.getContext();
 const gpuInfo = glContext.getExtension('WEBGL_debug_renderer_info');
@@ -186,6 +194,7 @@ window.addEventListener('unhandledrejection', (e) => error(e.reason));
 function schedule() {
   if (!frameRequested) {
     frameRequested = true;
+    performanceHUD.requestFrame(performance.now());
     requestAnimationFrame(tick);
   }
 }
@@ -1694,6 +1703,7 @@ function tick(now: number) {
     return;
   }
   frameRequested = false;
+  performanceHUD.frameStarted(performance.now());
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   if (hasMap() && ownsNavigation()) {
@@ -1743,8 +1753,12 @@ function tick(now: number) {
     look();
     if (moving) schedule();
   }
-  renderFrame();
-  frame++;
+  try {
+    renderFrame();
+    frame++;
+  } finally {
+    performanceHUD.frameEnded(performance.now(), renderCpuMs, frameRequested);
+  }
 }
 let renderCpuMs = 0;
 // Explicit render hook for local performance checks; normal UI remains demand driven.

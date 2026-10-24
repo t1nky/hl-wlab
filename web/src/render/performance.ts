@@ -17,8 +17,12 @@ interface TimerExtension {
 }
 export interface FrameSample {
   fps: number;
+  frames: number;
+  spanFps?: number;
+  idleBreaks: number;
   cpuMs?: number;
   gpuMs?: number;
+  gpuSampleAt?: number;
 }
 
 /** Counts rendered frames; never schedules work or waits for the GPU. */
@@ -32,8 +36,12 @@ export class FrameMonitor {
   private frames = 0;
   private firstFrameAt = 0;
   private lastFrameAt = 0;
+  private cadenceAt?: number;
+  private cadenceIntervals = 0;
+  private cadenceMs = 0;
+  private idleAt?: number;
+  private idleBreaks = 0;
   private cpu = 0;
-  private since = 0;
   private lastGpu?: number;
   private lastGpuAt = 0;
 
@@ -45,7 +53,8 @@ export class FrameMonitor {
     this.releaseQueries();
     this.enabled = enabled;
     this.frames = this.cpu = 0;
-    this.since = now;
+    this.cadenceAt = this.idleAt = undefined;
+    this.cadenceIntervals = this.cadenceMs = this.idleBreaks = 0;
     this.lastGpu = undefined;
     this.nextQuery = now;
     if (enabled && this.extension === undefined)
@@ -67,8 +76,28 @@ export class FrameMonitor {
     this.lastGpu = undefined;
   }
 
+  requestFrame(now: number) {
+    if (!this.enabled || this.idleAt === undefined) return;
+    // Brief gaps between pointer events still form a normal camera-turn cadence.
+    // Longer demand-driven sleeps must not join separate movement bursts.
+    if (now - this.idleAt > 20) {
+      this.cadenceAt = undefined;
+      this.idleBreaks++;
+    }
+    this.idleAt = undefined;
+  }
+
+  idle(now: number) {
+    if (this.enabled) this.idleAt = now;
+  }
+
   beginFrame(now: number) {
     if (this.enabled) {
+      if (this.cadenceAt !== undefined && now > this.cadenceAt) {
+        this.cadenceIntervals++;
+        this.cadenceMs += now - this.cadenceAt;
+      }
+      this.cadenceAt = now;
       if (!this.frames) this.firstFrameAt = now;
       this.lastFrameAt = now;
     }
@@ -127,19 +156,20 @@ export class FrameMonitor {
       }
     }
     const sample = {
-      // Sample actual frame cadence. Counting against the whole HUD interval
-      // incorrectly reports 30 when 60 FPS movement starts halfway through it.
-      fps:
+      fps: this.cadenceIntervals ? (1000 * this.cadenceIntervals) / this.cadenceMs : 0,
+      frames: this.frames,
+      spanFps:
         this.frames > 1
           ? (1000 * (this.frames - 1)) / Math.max(1, this.lastFrameAt - this.firstFrameAt)
-          : this.frames
-            ? 1000 / Math.max(1, now - this.since)
-            : 0,
+          : undefined,
+      idleBreaks: this.idleBreaks,
       cpuMs: this.frames ? this.cpu / this.frames : undefined,
       gpuMs: now - this.lastGpuAt < 1500 ? this.lastGpu : undefined,
+      gpuSampleAt: this.lastGpu === undefined ? undefined : this.lastGpuAt,
     };
+    if (!this.frames) this.cadenceAt = undefined;
     this.frames = this.cpu = 0;
-    this.since = now;
+    this.cadenceIntervals = this.cadenceMs = this.idleBreaks = 0;
     return sample;
   }
 

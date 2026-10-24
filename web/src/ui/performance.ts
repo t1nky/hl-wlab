@@ -1,4 +1,5 @@
 import type { Object3D, WebGLRenderer } from 'three';
+import { FrameDiagnostics, type SlowFrame } from '../render/frame-diagnostics';
 import { estimateSceneBytes, FrameMonitor } from '../render/performance';
 import './performance.css';
 
@@ -14,6 +15,7 @@ export function createPerformanceHUD(
   renderer: WebGLRenderer,
   scene: Object3D,
   viewport: HTMLElement,
+  context: () => Record<string, unknown> = () => ({}),
 ) {
   const panel = document.createElement('dl');
   panel.id = 'performanceHud';
@@ -64,6 +66,79 @@ export function createPerformanceHUD(
   let memoryAt = -Infinity,
     graphicsBytes = 0;
   let lastCpu: number | undefined, lastGpu: number | undefined;
+  const diagnostics = new FrameDiagnostics();
+  let gpuSampleAt = -Infinity;
+  let lastWarningAt = -Infinity,
+    lastIdleInfoAt = -Infinity;
+  let warningTimer: ReturnType<typeof setTimeout> | undefined;
+  let pendingWarning:
+    | {
+        firstAt: number;
+        lastAt: number;
+        count: number;
+        worst: SlowFrame;
+        details: Record<string, unknown>;
+      }
+    | undefined;
+  const details = () => ({
+    ...context(),
+    pageVisible: !document.hidden,
+    pageFocused: document.hasFocus(),
+    draws: renderer.info.render.calls,
+    triangles: renderer.info.render.triangles,
+    size: [renderer.domElement.width, renderer.domElement.height],
+    gpuLastMs: lastGpu,
+    gpuSampleAgeMs: lastGpu === undefined ? undefined : performance.now() - gpuSampleAt,
+    jsHeapBytes: (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory
+      ?.usedJSHeapSize,
+    sceneGpuBytesEstimate: graphicsBytes || undefined,
+    activity: diagnostics.activity(),
+  });
+  const severity = (frame: SlowFrame) =>
+    Math.max(frame.gapMs ?? 0, frame.queueMs, frame.frameCpuMs, frame.cpuMs);
+  function warn(frame: SlowFrame) {
+    const now = performance.now();
+    if (now - lastWarningAt >= 1000 && !pendingWarning) {
+      console.warn('[Wallbang performance] slow frame', { count: 1, ...frame, ...details() });
+      lastWarningAt = now;
+      return;
+    }
+    if (!pendingWarning)
+      pendingWarning = {
+        firstAt: frame.at,
+        lastAt: frame.at,
+        count: 0,
+        worst: frame,
+        details: details(),
+      };
+    pendingWarning.count++;
+    pendingWarning.lastAt = frame.at;
+    if (severity(frame) > severity(pendingWarning.worst)) {
+      pendingWarning.worst = frame;
+      pendingWarning.details = details();
+    }
+    warningTimer ??= setTimeout(
+      () => {
+        warningTimer = undefined;
+        if (!pendingWarning) return;
+        console.warn('[Wallbang performance] slow frames', {
+          ...pendingWarning.worst,
+          firstAt: pendingWarning.firstAt,
+          lastAt: pendingWarning.lastAt,
+          count: pendingWarning.count,
+          ...pendingWarning.details,
+        });
+        pendingWarning = undefined;
+        lastWarningAt = performance.now();
+      },
+      Math.max(0, 1000 - (now - lastWarningAt)),
+    );
+  }
+  function resetDiagnostics() {
+    diagnostics.reset();
+    clearTimeout(warningTimer);
+    warningTimer = pendingWarning = undefined;
+  }
   const text = (key: string, text: string) => {
     const value = values.get(key);
     if (value && value.textContent !== text) value.textContent = text;
@@ -75,6 +150,23 @@ export function createPerformanceHUD(
       lastCpu = frame.cpuMs;
       lastGpu = frame.gpuMs;
     } else if (frame.gpuMs !== undefined) lastGpu = frame.gpuMs;
+    if (frame.gpuSampleAt !== undefined) gpuSampleAt = frame.gpuSampleAt;
+    if (
+      frame.idleBreaks &&
+      frame.spanFps !== undefined &&
+      frame.spanFps < 55 &&
+      frame.fps >= 55 &&
+      now - lastIdleInfoAt >= 1000
+    ) {
+      console.info('[Wallbang performance] idle gap excluded from FPS', {
+        spanFps: frame.spanFps,
+        activeFps: frame.fps,
+        frames: frame.frames,
+        idleBreaks: frame.idleBreaks,
+        ...details(),
+      });
+      lastIdleInfoAt = now;
+    }
     text('fps', frame.fps ? String(Math.round(frame.fps)) : 'Idle');
     const cpuLabel = labels.get('cpu'),
       gpuLabel = labels.get('gpu');
@@ -105,12 +197,35 @@ export function createPerformanceHUD(
       interval = setInterval(refresh, 500);
     }
   }
-  const restored = () => monitor.contextChanged(performance.now());
-  const lost = () => monitor.contextLost();
-  document.addEventListener('visibilitychange', resume);
+  const visibility = () => {
+    resetDiagnostics();
+    resume();
+  };
+  const restored = () => {
+    resetDiagnostics();
+    monitor.contextChanged(performance.now());
+  };
+  const lost = () => {
+    resetDiagnostics();
+    monitor.contextLost();
+  };
+  document.addEventListener('visibilitychange', visibility);
   renderer.domElement.addEventListener('webglcontextlost', lost);
   renderer.domElement.addEventListener('webglcontextrestored', restored);
   return {
+    requestFrame(now: number) {
+      monitor.requestFrame(now);
+      if (!document.hidden) diagnostics.request(now);
+    },
+    frameStarted(now: number) {
+      if (!document.hidden) diagnostics.begin(now);
+    },
+    frameEnded(now: number, cpuMs: number, queued: boolean) {
+      if (document.hidden) return;
+      const slow = diagnostics.end(now, cpuMs);
+      if (slow) warn(slow);
+      if (!queued) monitor.idle(now);
+    },
     beginFrame: (now: number) => monitor.beginFrame(now),
     endFrame: (cpuMs: number) => monitor.endFrame(cpuMs),
     setEnabled(value: boolean) {
@@ -119,9 +234,10 @@ export function createPerformanceHUD(
       resume();
     },
     dispose() {
+      resetDiagnostics();
       clearInterval(interval);
       monitor.setEnabled(false, performance.now());
-      document.removeEventListener('visibilitychange', resume);
+      document.removeEventListener('visibilitychange', visibility);
       renderer.domElement.removeEventListener('webglcontextlost', lost);
       renderer.domElement.removeEventListener('webglcontextrestored', restored);
       panel.remove();

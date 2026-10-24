@@ -53,8 +53,24 @@ it('counts actual rendered frames and CPU time without making idle work', () => 
     monitor.beginFrame((i * 1000) / 60);
     monitor.endFrame(2);
   }
-  expect(monitor.sample(1000)).toEqual({ fps: 60, cpuMs: 2, gpuMs: undefined });
-  expect(monitor.sample(2000)).toEqual({ fps: 0, cpuMs: undefined, gpuMs: undefined });
+  expect(monitor.sample(1000)).toEqual({
+    fps: 60,
+    frames: 60,
+    spanFps: 60,
+    idleBreaks: 0,
+    cpuMs: 2,
+    gpuMs: undefined,
+    gpuSampleAt: undefined,
+  });
+  expect(monitor.sample(2000)).toEqual({
+    fps: 0,
+    frames: 0,
+    spanFps: undefined,
+    idleBreaks: 0,
+    cpuMs: undefined,
+    gpuMs: undefined,
+    gpuSampleAt: undefined,
+  });
   expect(gl.createQuery).not.toHaveBeenCalled();
   monitor.setEnabled(false, 2000);
   monitor.beginFrame(2100);
@@ -86,6 +102,40 @@ it('includes actual stalls between rendered frames in the FPS reading', () => {
     monitor.endFrame(1);
   }
   expect(monitor.sample(500).fps).toBeCloseTo(4000 / (100 + 1000 / 60));
+});
+
+it('excludes idle time between multiple short movement bursts within one HUD sample', () => {
+  const { monitor } = context(false);
+  monitor.setEnabled(true, 0);
+  for (const start of [0, 250]) {
+    monitor.requestFrame(start);
+    for (let i = 0; i < 3; i++) {
+      monitor.beginFrame(start + (i * 1000) / 60);
+      monitor.endFrame(1);
+    }
+    monitor.idle(start + 2000 / 60 + 1);
+  }
+  const sample = monitor.sample(500);
+  expect(sample.fps).toBeCloseTo(60);
+  expect(sample.spanFps).toBeLessThan(20);
+  expect(sample.idleBreaks).toBe(1);
+});
+
+it('keeps rapid pointer-driven frames in one cadence and gives a single frame no invented FPS', () => {
+  const { monitor } = context(false);
+  monitor.setEnabled(true, 0);
+  for (let i = 0; i < 10; i++) {
+    const at = (i * 1000) / 60;
+    monitor.requestFrame(at);
+    monitor.beginFrame(at + 4);
+    monitor.endFrame(1);
+    monitor.idle(at + 5);
+  }
+  expect(monitor.sample(500).fps).toBeCloseTo(60);
+  monitor.requestFrame(750);
+  monitor.beginFrame(760);
+  monitor.endFrame(1);
+  expect(monitor.sample(1000)).toMatchObject({ fps: 0, frames: 1 });
 });
 
 it('reads GPU results only after completion, converts nanoseconds, and rejects disjoint results', () => {
