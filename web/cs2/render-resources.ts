@@ -32,6 +32,8 @@ function texture(set: Resources, value: unknown) {
 function material(set: Resources, value: Material) {
   set.materials.add(value);
   for (const entry of Object.values(value)) texture(set, entry);
+  const uniforms = (value as Material & { uniforms?: Record<string, { value: unknown }> }).uniforms;
+  for (const uniform of Object.values(uniforms ?? {})) texture(set, uniform.value);
   for (const key of ['displayTexture', 'displayLightMap']) texture(set, value.userData[key]);
   for (const key of ['cs2Textures', 'cs2Masks'])
     for (const entry of value.userData[key] ?? []) texture(set, entry);

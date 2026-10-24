@@ -166,10 +166,13 @@ export async function compressRenderPackage(output) {
   const files = new Set(metadata.chunks);
   if (metadata.sunShadows) files.add(metadata.sunShadows.file);
   if (metadata.irradiance) files.add(metadata.irradiance.file);
+  if (metadata.sky) files.add(metadata.sky.file);
   for (const chunk of metadata.chunks) {
     const gltf = JSON.parse(readFileSync(resolve(output, chunk), 'utf8'));
     for (const buffer of gltf.buffers) if (buffer.uri) files.add(`render/${buffer.uri}`);
     for (const image of gltf.images) files.add(`render/${image.uri}`);
+    for (const texture of gltf.textures ?? [])
+      if (texture.extras?.cs2Native) files.add(texture.extras.cs2Native.file);
     for (const material of gltf.materials ?? []) {
       const settings = material.extras?.cs2;
       for (const layer of [settings?.tint?.base, ...(settings?.layers ?? []).map((l) => l.tint)])

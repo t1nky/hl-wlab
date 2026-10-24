@@ -6,7 +6,7 @@ import { loadRenderMap, type RenderMap } from '../../cs2/render-map';
 import { warmRenderMap } from '../../cs2/render-warmup';
 import { CS2_ROW, classifyCs2, cs2Sample, type ScanStats } from '../../cs2/scan';
 import { type Metadata, required, type Shot, type V3 } from '../../cs2/types';
-import { cs2Lighting } from '../render/lighting';
+import { cs2Lighting, setCs2Environment } from '../render/lighting';
 import {
   type AnalysisProgress,
   CS2,
@@ -133,29 +133,22 @@ export class Cs2Game implements GameAnalysis {
       }
     });
   }
-  async load(progress: (message: string) => void) {
+  async load(progress: (message: string) => void, renderer?: THREE.WebGLRenderer) {
     try {
-      await this.loadMap(progress);
+      await this.loadMap(progress, renderer);
     } catch (error) {
       this.dispose();
       throw error;
     }
   }
-  private async loadMap(progress: (message: string) => void) {
+  private async loadMap(progress: (message: string) => void, renderer?: THREE.WebGLRenderer) {
     progress('Loading CS2 physics and cached BVH…');
     const reply = await this.request({ op: 'load', includeBuffer: false, mapId: this.mapId });
     this.meta = required(reply.meta);
-    const sun = this.group.children.find((child) => child instanceof THREE.DirectionalLight);
-    if (sun instanceof THREE.DirectionalLight) {
-      const environment = this.meta.environment;
-      if (environment) {
-        const pitch = THREE.MathUtils.degToRad(environment.angles[0]);
-        const yaw = THREE.MathUtils.degToRad(environment.angles[1]);
-        sun.position
-          .set(-Math.cos(pitch) * Math.cos(yaw), -Math.cos(pitch) * Math.sin(yaw), Math.sin(pitch))
-          .multiplyScalar(4000);
-        sun.color.setRGB(...environment.color, THREE.SRGBColorSpace);
-      } else if (this.meta.map !== 'de_inferno') sun.intensity = 0;
+    if (this.meta.environment) setCs2Environment(this.group, this.meta.environment);
+    else if (this.meta.map !== 'de_inferno') {
+      const sun = this.group.children.find((child) => child instanceof THREE.DirectionalLight);
+      if (sun instanceof THREE.DirectionalLight) sun.intensity = 0;
     }
     const playerResponse = await fetch(`${packageBase(this.mapId)}player.json`, {
       signal: this.abort.signal,
@@ -174,12 +167,14 @@ export class Cs2Game implements GameAnalysis {
       collisionFingerprint: this.meta.fingerprint,
       onProgress: progress,
       mapId: this.mapId,
+      renderer,
     });
     if (this.disposed) {
       render.dispose();
       throw Error('CS2 map closed');
     }
     this.render = render;
+    if (render.metadata.environment) setCs2Environment(this.group, render.metadata.environment);
     this.group.add(this.render.group);
     this.bounds.setFromObject(this.render.group);
     const spawn = this.meta.spawns[0]?.origin;

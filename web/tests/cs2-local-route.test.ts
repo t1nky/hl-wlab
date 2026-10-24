@@ -16,6 +16,7 @@ test('private CS2 route serves WebP and PNG, revalidates, and restricts asset pa
   await writeFile(join(assets, 'render/alpha.png'), 'png fixture');
   await writeFile(join(assets, 'render/sun.bc4.gz'), 'sun fixture');
   await writeFile(join(assets, 'render/sun.bc7.gz'), 'BC7 sun fixture');
+  await writeFile(join(assets, 'render/native.bc1.gz'), 'BC1 color fixture');
   await writeFile(join(assets, 'render/irradiance.bc6h.gz'), 'irradiance fixture');
   await writeFile(join(assets, 'render/mask.r8.gz'), 'mask fixture');
   await writeFile(join(assets, 'render/not-allowed.txt'), 'private');
@@ -80,7 +81,13 @@ test('private CS2 route serves WebP and PNG, revalidates, and restricts asset pa
       ).status,
       405,
     );
-    for (const atlas of ['sun.bc4.gz', 'sun.bc7.gz', 'irradiance.bc6h.gz', 'mask.r8.gz']) {
+    for (const atlas of [
+      'sun.bc4.gz',
+      'sun.bc7.gz',
+      'native.bc1.gz',
+      'irradiance.bc6h.gz',
+      'mask.r8.gz',
+    ]) {
       const response = await fetch(`${base}/local/render/${atlas}`);
       assert.equal(response.status, 200);
       assert.equal(response.headers.get('content-type'), 'application/octet-stream');
@@ -90,6 +97,8 @@ test('private CS2 route serves WebP and PNG, revalidates, and restricts asset pa
       'render/fixture.webp.js',
       'render/sun.bc7.gz.js',
       'render/sun.bc7',
+      'render/native.bc1.gz.js',
+      'render/native.bc1',
       'render/irradiance.bc6h.gz.js',
       'render/irradiance.bc6h',
       'render/mask.r8',

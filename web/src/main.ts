@@ -231,6 +231,18 @@ function showShadows() {
   schedule();
 }
 function showSky() {
+  if (cs2) {
+    let found = false;
+    cs2.render?.group.traverse((object) => {
+      if (object.userData.cs2Sky) {
+        found = true;
+        object.visible = $('sky').checked;
+      }
+    });
+    $('sky').disabled = !found;
+    schedule();
+    return;
+  }
   scene.background = $('sky').checked ? skyTexture : null;
   $('sky').disabled = !skyTexture;
   schedule();
@@ -827,6 +839,7 @@ function applyGameView() {
   camera.updateProjectionMatrix();
   scene.fog = cs2 && mode === 'walk' ? cs2WalkFog : null;
   scene.background = cs2 ? new THREE.Color(CS2_BACKGROUND) : $('sky').checked ? skyTexture : null;
+  if (cs2) showSky();
   sizeViewport();
 }
 function sizeViewport() {
@@ -1154,7 +1167,7 @@ async function switchGame(next: string, mapId?: string) {
       } else {
         await game.load((message) => {
           $('assetsStatus').textContent = message;
-        });
+        }, renderer);
         game.textures($('textures').checked);
         await game.prepareRender(renderer, camera, [null, cs2WalkFog], (message) => {
           $('assetsStatus').textContent = message;

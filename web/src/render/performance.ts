@@ -161,6 +161,22 @@ export function textureBytes(texture: Texture): number {
   const image = texture.image;
   if (!image) return 0;
   const images = Array.isArray(image) ? image : [image];
+  if (
+    images.every(
+      (face) =>
+        Array.isArray(face.mipmaps) &&
+        face.mipmaps.every((mip: { data?: ArrayBufferView }) => mip.data),
+    )
+  )
+    return images.reduce(
+      (sum, face) =>
+        sum +
+        face.mipmaps.reduce(
+          (bytes: number, mip: { data: ArrayBufferView }) => bytes + mip.data.byteLength,
+          0,
+        ),
+      0,
+    );
   const components =
     texture.format === RedFormat || texture.format === RedIntegerFormat
       ? 1

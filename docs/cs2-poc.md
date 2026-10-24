@@ -43,6 +43,57 @@ the measurement; static scenes still sleep. Local measurements are ignored in
 
 ## Performance and lighting pass
 
+The October 23 render parity pass fixes a direct-light unit mismatch: Source's
+diffuse light values already account for the Lambert normalization, while Three's
+Lambert BRDF divides by PI. The indirect atlas had this conversion; the sun did
+not. Sun intensity now converts once at the light and reads the selected map's
+authored brightness and brightness scale, alongside its direction and color.
+This restores direct/indirect contrast without adding shadow passes. An optional
+authored BC6H HDR sky cube replaces the flat background; Dust2's cube adds 1.5 MiB,
+one draw and 12 triangles. **View → Sky** controls it. Unsupported hardware and
+older prepared packages retain the flat background.
+
+Color textures can now retain their original BC1/BC7 GPU blocks and authored mip
+chains instead of decoding into RGBA and generating new mips. No textures are
+resized or recompressed by this path. It requires the matching sRGB compression
+extension; other devices use the existing PNG/WebP images. Shader-specific codecs
+remain on that fallback. Both versions stay in the private package, increasing
+disk size; only the selected version loads into memory. Native mip views share
+one bounded backing buffer per texture. Uniform-owned sky textures participate
+in loading, cancellation, final ownership, disposal and GPU memory accounting.
+
+A paired Dust2 render retained **187 draws and 1,426,203 triangles**. Estimated
+loaded scene storage fell from **560.6 to 316.5 MiB**, including geometry and the
+same lighting/sky. Retained decoded color bitmaps fell from **214 MiB to zero**,
+replaced by approximately **41 MiB** of native color blocks. This is resource
+accounting, not whole-process RAM or driver allocation. Pixel output is not
+identical to the previous image path: hardware block decoding and original mip
+levels replace CPU-decoded colors and regenerated mips. The authored bytes are
+unchanged; image fallback is still supported. All native color bindings and sky
+blocks were compared against the installation: Dust2 **44,942,936** bytes,
+Mirage **49,871,288**, Inferno **81,580,072** bytes, all exact.
+
+In Chrome/D3D11 on the RTX 5070 Ti, short paired 2560×1440 fixed-view runs
+measured image-path GPU medians of 2.01/1.94 ms and native-path medians of
+1.90/2.38 ms. These samples do not establish a GPU-time speedup; memory reduction
+is the clear result. Complete loader plus GPU preparation times were 1.41/1.27 s
+and 1.39/1.34 s respectively, with warm HTTP/disk caches. JS heap readings can
+rise because native blocks are typed arrays, while the removed ImageBitmaps
+were native allocations outside that heap counter. Do not equate the HUD's JS
+heap with total RAM. Dust2/Mirage/Inferno switches returned to the same GoldSrc
+baseline of 83 GPU textures and 85 geometries with no GL/application errors.
+Cancellation at 0/40/300 ms rejected the native load and retained that baseline.
+
+Visual parity is still incomplete. Dust2's crane and distant scenery belong to
+its separate `skybox_reference` 3D scene, which is not exported. Overhead cables
+are `path_particle_rope_clientside` entities, also absent from the static exporter.
+Normal/roughness shading, specular/environment reflections, directional indirect
+lighting, local lights, Source tone mapping/color grading and atmospheric effects
+remain approximations or omissions. These need their own source-data rendering;
+raising texture resolution or changing one global color cannot reproduce them.
+The supplied screenshots also use different camera positions, so they are not a
+pixel-aligned reference pair.
+
 The October 22, 2026 pass compares against `334ac4b` using the same installed
 Inferno data. Timings are local CPU wall time; browser rendering used SwiftShader,
 so these are not hardware-GPU timings or moving-camera FPS claims.

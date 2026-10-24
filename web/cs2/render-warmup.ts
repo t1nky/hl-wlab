@@ -71,6 +71,9 @@ export async function warmRenderMap(
     }
     for (const material of materials) {
       for (const value of Object.values(material)) texture(value);
+      const uniforms = (material as Material & { uniforms?: Record<string, { value: unknown }> })
+        .uniforms;
+      for (const uniform of Object.values(uniforms ?? {})) texture(uniform.value);
       // Disabled texture variants do not reference their layer/mask samplers.
       if ((material as Material & { map?: Texture | null }).map) {
         for (const value of material.userData.cs2Textures ?? []) texture(value);

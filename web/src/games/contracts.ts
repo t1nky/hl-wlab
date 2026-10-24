@@ -161,7 +161,7 @@ export const CS2: GameDefinition = {
     bookmarks: false,
     importFiles: false,
     libraryImport: false,
-    sky: false,
+    sky: true,
   },
   scan: {
     cached: false,

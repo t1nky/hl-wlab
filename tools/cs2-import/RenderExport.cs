@@ -17,7 +17,7 @@ using VMaterial = ValveResourceFormat.ResourceTypes.Material;
 internal static class RenderExport
 {
     private const int TextureSize = 512;
-    private sealed record TextureInfo(string File, int Width, int Height, long Bytes, Vector3 Average);
+    private sealed record TextureInfo(string File, int Width, int Height, long Bytes, Vector3 Average, JsonObject? Native = null);
     private sealed record MaskInfo(string File, int Width, int Height, long Bytes) { public int GpuBytes => Width * Height; }
     private sealed record MaterialInfo(string Path, string? Texture, bool KeepAlpha, string Shader,
         int BlendMode, float AlphaCutoff, float Opacity, Dictionary<string, Vector4> Vectors,
@@ -86,6 +86,8 @@ internal static class RenderExport
             File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-import/RenderTint.cs")) +
             File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-import/RenderVisibility.cs")) +
             File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-import/RenderIrradiance.cs")) +
+            File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-import/RenderTextureBlocks.cs")) +
+            File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-import/RenderSky.cs")) +
             File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-prepare.mjs")) +
             File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-render-pack.mjs")))));
         var manifest = Path.Combine(output, "render.json");
@@ -113,7 +115,7 @@ internal static class RenderExport
         using var worldResource = rawLoader.LoadFileCompiled($"{extract.LumpFolder}/world.vwrld")!;
         var world = (World)worldResource.DataBlock!;
         var warnings = new HashSet<string>();
-        JsonObject? sunShadows = null, irradiance = null;
+        JsonObject? sunShadows = null, irradiance = null, sky = null;
         // Some maps are indoors, unlit, or use another bake format. Geometry/collision
         // remain useful with fallback lighting; never apply an incompatible atlas.
         try { sunShadows = RenderSunShadows.Export(world, rawLoader, folder); }
@@ -121,6 +123,8 @@ internal static class RenderExport
         // Indirect lighting is independent of the direct shadow atlas format.
         try { irradiance = RenderIrradiance.Export(world, rawLoader, folder); }
         catch (Exception e) when (e is InvalidDataException or InvalidOperationException or FileNotFoundException) { warnings.Add("Baked irradiance unavailable: " + e.Message); }
+        try { sky = RenderSky.Export(world, rawLoader, folder); }
+        catch (Exception e) when (e is InvalidDataException or InvalidOperationException or FileNotFoundException) { warnings.Add("HDR sky unavailable: " + e.Message); }
         var nodes = world.GetWorldNodeNames().ToArray();
         var chunks = new List<string>();
         var textures = new Dictionary<string, TextureInfo>();
@@ -260,13 +264,15 @@ internal static class RenderExport
                                 content = new TextureInfo(file, bitmap.Width, bitmap.Height, new FileInfo(Path.Combine(folder, file)).Length, average);
                                 imageContents[contentKey] = content;
                             }
-                            texture = content with { Average = average };
+                            texture = content with { Average = average, Native = RenderTextureBlocks.Export(data, level, folder) };
+                            if (texture.Native != null) { texture.Native["source"] = texturePath; texture.Native["sourceMip"] = level; }
                             textures[key] = texture;
                             if (Math.Max(bitmap.Width, bitmap.Height) > TextureSize) warnings.Add("Texture lacks small mip: " + texturePath);
                         }
                         var index = images.Count;
                         images.Add(new JsonObject { ["uri"] = texture.File });
-                        gltfTextures.Add(new JsonObject { ["sampler"] = 0, ["source"] = index });
+                        gltfTextures.Add(new JsonObject { ["sampler"] = 0, ["source"] = index,
+                            ["extras"] = new JsonObject { ["cs2Native"] = texture.Native?.DeepClone() } });
                         imageInfos.Add(texture);
                         return index;
                     }
@@ -343,9 +349,12 @@ internal static class RenderExport
                 usedFiles.Add("render/" + buffer.GetProperty("uri").GetString()!);
         }
         foreach (var texture in imageContents.Values) usedFiles.Add("render/" + texture.File);
+        foreach (var texture in textures.Values) if (texture.Native != null) usedFiles.Add(texture.Native["file"]!.GetValue<string>());
         foreach (var mask in maskContents.Values) usedFiles.Add("render/" + mask.File);
         if (sunShadows != null) usedFiles.Add(sunShadows["file"]!.GetValue<string>());
         if (irradiance != null) usedFiles.Add(irradiance["file"]!.GetValue<string>());
+        if (sky != null) usedFiles.Add(sky["file"]!.GetValue<string>());
+        var nativeTextures = textures.Values.Where(t => t.Native != null).Select(t => t.Native!).DistinctBy(n => n["file"]!.GetValue<string>()).ToArray();
         var files = usedFiles.Order().Select(path => new { path, bytes = new FileInfo(Path.Combine(output, path)).Length }).ToArray();
         var metadata = new
         {
@@ -354,16 +363,18 @@ internal static class RenderExport
             meshCount, primitives, triangleCount, texturedTriangleCount, materialCount, excludedLods, textureCount = imageContents.Count,
             maskedTintMaterials, textureBytes = imageContents.Values.Sum(t => t.Bytes),
             maskTextureCount = maskContents.Count, maskTextureBytes = maskContents.Values.Sum(t => t.Bytes), maskTextureGpuBytes = maskContents.Values.Sum(t => (long)t.GpuBytes),
-            sunShadows, irradiance,
+            sunShadows, irradiance, sky, environment = RenderSky.Environment(world, rawLoader),
             textureEncoding = new { opaque = "smallest of PNG / verified lossless WebP", alpha = "PNG", pixelRoundTripVerified = true,
-                webpCount = imageContents.Values.Count(t => t.File.EndsWith(".webp")) },
+                webpCount = imageContents.Values.Count(t => t.File.EndsWith(".webp")),
+                native = "Authored BC1/BC7 blocks and mips, no recompression; portable images retained for fallback",
+                nativeCount = nativeTextures.Length, nativeGpuBytes = nativeTextures.Sum(n => n["gpuBytes"]!.GetValue<int>()) },
             estimatedTextureGpuBytes = imageContents.Values.Sum(t => (long)t.Width * t.Height * 4 * 4 / 3) + maskContents.Values.Sum(t => (long)t.GpuBytes) + (sunShadows?["gpuBytes"]?.GetValue<int>() ?? 0) + (irradiance?["gpuBytes"]?.GetValue<int>() ?? 0),
             totalBytes = files.Sum(f => f.bytes), files,
             warnings = warnings.Concat(new[] {
                 "Render geometry is for display only; separate vphys data drives shots and walking.",
                 "Generic terrain layers use TEXCOORD4 weights and original blend modulation channels. Environment height blending, normal/roughness, directional irradiance and full Source shader parity omitted. Baked lighting uses native BC4/BC7 sun visibility and bounded BC6H irradiance.",
                 "Opaque environment original RGBA and lossless shared R8 height-green masks drive runtime affine color correction, model tint and vertex paint. Shared overlays and other shader families remain approximations.",
-                "Static world-node surfaces only; unsupported atmospheric-effect proxies, entity-driven doors, breakables, movable props, skybox and live state omitted."
+                "Static world-node surfaces and optional authored HDR sky cube only; atmospheric-effect proxies, entity-driven doors, breakables, movable props, 3D sky scene, particle ropes and live state omitted."
             }),
         };
         File.WriteAllText(manifest + ".tmp", JsonSerializer.Serialize(metadata)); File.Move(manifest + ".tmp", manifest, true);

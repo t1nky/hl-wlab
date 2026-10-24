@@ -13,9 +13,11 @@ import {
   type Texture,
   Vector2,
   Vector3,
+  type WebGLRenderer,
 } from 'three';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import type { Cs2Environment } from '../src/render/lighting';
 import { packageBase } from './package';
 import { type batchStaticMap, batchStaticMapAsync } from './render-batches';
 import { decodeRenderViews, type RenderDecodeTimings } from './render-decode';
@@ -23,8 +25,10 @@ import { type IrradianceMetadata, loadIrradiance } from './render-irradiance';
 import { abortableRender, trackRenderParser } from './render-loader';
 import { type Cs2Mask, loadMaterialMask } from './render-masks';
 import { type Cs2Material, diffuseMaterial } from './render-materials';
+import { nativeTexturePlugin } from './render-native-textures';
 import { RenderResources } from './render-resources';
 import { yieldRenderTask } from './render-schedule';
+import { loadSky, type SkyMetadata } from './render-sky';
 import { hasSunBinding, loadSunVisibility, type SunLighting, type SunMetadata } from './render-sun';
 
 let decoderWorkersStarted = false;
@@ -50,6 +54,8 @@ export interface RenderMetadata {
   packageHash?: string;
   sunShadows?: SunMetadata;
   irradiance?: IrradianceMetadata;
+  sky?: SkyMetadata;
+  environment?: Cs2Environment;
   runtimeBounds?: {
     geometryCount: number;
     shrunkCount: number;
@@ -133,6 +139,8 @@ export async function loadRenderMap(
     batch?: boolean;
     sunShadows?: boolean;
     mapId?: string;
+    renderer?: WebGLRenderer;
+    nativeTextures?: boolean;
   } = {},
 ): Promise<RenderMap> {
   const { clippingPlanes = [], onProgress, signal: parentSignal } = options;
@@ -192,6 +200,16 @@ export async function loadRenderMap(
     if (!disposed) onProgress?.(`Loading textured map resources ${loaded}/${total}…`);
   };
   const loader = new GLTFLoader(manager);
+  loader.register((parser) =>
+    nativeTexturePlugin(
+      parser,
+      options.nativeTextures === false ? undefined : options.renderer,
+      resources,
+      base,
+      version,
+      signal,
+    ),
+  );
   let chunkUrl = '';
   const decodes: RenderDecodeTimings[] = [];
   loader.register((parser) => {
@@ -286,6 +304,13 @@ export async function loadRenderMap(
   let sun: SunLighting | undefined;
   try {
     signal.throwIfAborted();
+    if (metadata.sky) {
+      const sky = await loadSky(metadata.sky, base, version, options.renderer, signal);
+      if (sky) {
+        resources.object(sky);
+        group.add(sky);
+      }
+    }
     if (options.sunShadows !== false) {
       if (metadata.sunShadows) {
         const sunStarted = performance.now();

@@ -25,7 +25,7 @@ import {
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { FrameLimiter } from '../src/render/frame-rate';
-import { CS2_BACKGROUND, cs2Lighting } from '../src/render/lighting';
+import { CS2_BACKGROUND, cs2Lighting, setCs2Environment } from '../src/render/lighting';
 import { loadRenderMap, type RenderMap } from './render-map';
 import { decodeMap, type MapData, type Metadata, required, type Shot, type V3 } from './types';
 import { createWalkControls, type WalkState } from './walk-controls';
@@ -149,6 +149,7 @@ async function ensureTextures() {
   texturesLoading = true;
   try {
     texturedMap = await loadRenderMap({
+      renderer,
       clippingPlanes: [ceiling],
       collisionFingerprint: meta.fingerprint,
       batch: new URLSearchParams(location.search).get('batch') !== '0',
@@ -157,6 +158,8 @@ async function ensureTextures() {
       },
     });
     scene.add(texturedMap.group);
+    if (texturedMap.metadata.environment)
+      setCs2Environment(scene, texturedMap.metadata.environment);
     updateDisplay();
   } catch (error) {
     element('render-status').textContent = String(error).replace(/^Error: /, '');
