@@ -284,6 +284,12 @@ internal static class RenderExport
                     }
                     var index = AddTexture(source.Texture, source.KeepAlpha);
                     pbr["baseColorTexture"] = new JsonObject { ["index"] = index };
+                    if (!maskedTint && source.Integers.GetValueOrDefault("F_TINT_MASK") == 1 &&
+                        source.Shader is "csgo_vertexlitgeneric.vfx" or "csgo_lightmappedgeneric.vfx") {
+                        if (!source.Textures.TryGetValue("g_tTintMask", out var tintMask))
+                            throw new InvalidDataException("Missing generic model tint mask: " + source.Path);
+                        material["extras"]!["cs2"]!["modelTintMask"] = AddMask(tintMask, 0);
+                    }
                     foreach (var (layer, layerIndex) in source.Layers.Select((path, index) => (path, index))) {
                         var settings = new JsonObject { ["texture"] = AddTexture(layer, false, layerIndex + 2), ["uv"] = UvSettings(source, (layerIndex + 2).ToString()) };
                         if (maskedTint) settings["tint"] = TintSettings(layerIndex + 2, settings["texture"]!.GetValue<int>());

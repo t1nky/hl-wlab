@@ -404,6 +404,9 @@ export async function loadRenderMap(
                   .map(maskTexture),
               )
             : [];
+        const modelTintMask = settings?.modelTintMask
+          ? await maskTexture(settings.modelTintMask)
+          : undefined;
         const variants = new Map<string, Material>();
         for (const lit of modes.get(source) ?? []) {
           const material = diffuseMaterial(
@@ -413,6 +416,7 @@ export async function loadRenderMap(
             lit !== 'fallback' ? sun : undefined,
             masks,
             lit === 'probe',
+            modelTintMask,
           );
           resources.material(material);
           material.clippingPlanes = clippingPlanes;

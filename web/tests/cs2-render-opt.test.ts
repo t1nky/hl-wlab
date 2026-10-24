@@ -42,6 +42,63 @@ const settings: Cs2Material = {
 };
 
 describe('CS2 render optimization correctness', () => {
+  it('masks generic object tint after albedo blending while preserving paint alpha', () => {
+    const source = new MeshStandardMaterial({ map: new Texture(), color: 0x9a3030 });
+    const mask = new Texture();
+    const generic: Cs2Material = {
+      ...settings,
+      shader: 'csgo_vertexlitgeneric.vfx',
+      modelTintMask: {
+        file: 'render/mask-00000000000000000000.r8.gz',
+        format: 'R8_UNORM',
+        width: 1,
+        height: 1,
+        bytes: 21,
+        gpuBytes: 1,
+      },
+      layers: [{ texture: 0, uv: identityUv }],
+    };
+    const material = diffuseMaterial(source, generic, [new Texture()], undefined, [], false, mask);
+    const shader = {
+      vertexShader: ShaderLib.lambert.vertexShader,
+      fragmentShader: ShaderLib.lambert.fragmentShader,
+      uniforms: {},
+    } as WebGLProgramParametersWithUniforms;
+    material.onBeforeCompile(shader, {} as WebGLRenderer);
+    expect(shader.uniforms.cs2ModelTintMask.value).toBe(mask);
+    expect(material.userData.cs2Masks).toEqual([mask]);
+    expect(shader.fragmentShader).not.toContain('#include <color_fragment>');
+    expect(shader.fragmentShader).toContain('diffuseColor.a *= vColor.a');
+    expect(shader.fragmentShader).toContain('cs2ModelColor *= vColor.rgb');
+    expect(shader.fragmentShader).toContain(
+      'mix(vec3(1.0), cs2ModelColor, texture2D(cs2ModelTintMask, vMapUv).r)',
+    );
+    expect(shader.fragmentShader).not.toContain('diffuse * texture2D(cs2Layer0');
+    const blend = shader.fragmentShader.indexOf('mix(diffuseColor.rgb, texture2D(cs2Layer0');
+    const tint = shader.fragmentShader.indexOf('vec3 cs2ModelColor = diffuse');
+    expect(blend).toBeGreaterThan(0);
+    expect(tint).toBeGreaterThan(blend);
+    // The mask samples transformed primary UVs only when the base map exists.
+    expect(shader.fragmentShader.lastIndexOf('#ifdef USE_MAP', tint)).toBeLessThan(tint);
+    expect(shader.fragmentShader.indexOf('#endif', tint)).toBeGreaterThan(tint);
+    const plain = diffuseMaterial(source, { ...generic, modelTintMask: undefined });
+    expect(material.customProgramCacheKey()).not.toBe(plain.customProgramCacheKey());
+  });
+  it('keeps distinct tint masks out of the same batch and disposes shared masks once', () => {
+    const group = new Group();
+    const source = new MeshStandardMaterial({ map: new Texture() });
+    const mask = new Texture();
+    const dispose = vi.spyOn(mask, 'dispose');
+    for (const selected of [mask, mask, new Texture()]) {
+      const material = diffuseMaterial(source, settings, [], undefined, [], false, selected);
+      group.add(new Mesh(new BoxGeometry(), material));
+    }
+    // Only the two instances with the same mask may merge.
+    expect(batchStaticMap(group).batches).toBe(1);
+    expect(group.children).toHaveLength(2);
+    disposeRenderGroup(group);
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
   it.each([0, 1, 2, 3])('blends generic terrain layers using source modulation mode %i', (mode) => {
     const source = new MeshStandardMaterial({ map: new Texture(), color: 0xaabbcc });
     const generic: Cs2Material = {

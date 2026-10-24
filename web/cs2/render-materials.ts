@@ -36,6 +36,7 @@ export interface Cs2Material {
   depthBias?: boolean;
   modelTintBaked?: boolean;
   tint?: { amount: number; material: [number, number, number]; base: LayerTint };
+  modelTintMask?: Cs2Mask;
   uv: UvSettings;
   layers: { texture: number; uv: UvSettings; tint?: LayerTint }[];
   genericBlend?: { mode: number; softness: number; mask?: Cs2Mask; softnessMask?: Cs2Mask };
@@ -96,6 +97,7 @@ export function diffuseMaterial(
   sun?: SunLighting,
   maskTextures: Texture[] = [],
   probeLighting = false,
+  modelTintMask?: Texture,
 ): MeshLambertMaterial {
   const material = new MeshLambertMaterial({
     color: source.color,
@@ -113,7 +115,7 @@ export function diffuseMaterial(
   material.userData = {
     ...source.userData,
     cs2Textures: layerTextures,
-    cs2Masks: maskTextures,
+    cs2Masks: modelTintMask ? [...maskTextures, modelTintMask] : maskTextures,
     cs2TexturesEnabled: { value: 1 },
     cs2Sun: sun,
     cs2LightingMode: probeLighting ? 'probe' : sun ? 'lightmap' : 'fallback',
@@ -131,7 +133,8 @@ export function diffuseMaterial(
     material.polygonOffsetFactor = -1;
     material.polygonOffsetUnits = -1;
   }
-  if (!sun && (!settings || (!layerTextures.length && !settings.tint))) return material;
+  if (!sun && (!settings || (!layerTextures.length && !settings.tint && !settings.modelTintMask)))
+    return material;
   if (settings?.layers.some((layer) => layer.uv.channel === 1)) material.defines = { USE_UV1: '' };
   for (const texture of layerTextures) texture.colorSpace = SRGBColorSpace;
   material.onBeforeCompile = (shader, renderer) => {
@@ -140,7 +143,7 @@ export function diffuseMaterial(
       if (sun) patchSunVisibility(shader, sun, renderer);
       if (sun?.irradiance) patchIrradiance(shader, sun, renderer);
     }
-    if (!settings || (!layerTextures.length && !settings.tint)) return;
+    if (!settings || (!layerTextures.length && !settings.tint && !settings.modelTintMask)) return;
     shader.uniforms.cs2TexturesEnabled = material.userData.cs2TexturesEnabled;
     const layers = settings.layers.slice(0, layerTextures.length);
     if (layers.length) {
@@ -150,6 +153,18 @@ export function diffuseMaterial(
     shader.fragmentShader = `uniform float cs2TexturesEnabled;\n${shader.fragmentShader}`;
     let vertex = layers.length ? 'vCs2Blend = cs2Blend;\n' : '';
     let fragment = '';
+    if (settings.modelTintMask) {
+      if (!modelTintMask || settings.tint) throw Error('Missing or incompatible model tint mask');
+      shader.uniforms.cs2ModelTintMask = { value: modelTintMask };
+      shader.fragmentShader = `uniform sampler2D cs2ModelTintMask;\n${shader.fragmentShader}`;
+      // Combine albedo layers first, then mask the complete material/object/paint
+      // tint. Never divide by a tint component: black is a valid instance color.
+      fragment = 'diffuseColor.rgb = sampledDiffuseColor.rgb;\n';
+      shader.fragmentShader = shader.fragmentShader.replace(
+        '#include <color_fragment>',
+        '#ifdef USE_COLOR_ALPHA\ndiffuseColor.a *= vColor.a;\n#endif',
+      );
+    }
     if (settings.genericBlend?.mode) {
       const blend = settings.genericBlend;
       if (maskTextures.length !== (blend.mode === 1 ? 2 : 1))
@@ -255,7 +270,7 @@ ${shader.fragmentShader}`;
         : `v${name}Uv = (${name}Uv * vec3(${layer.uv.channel === 1 ? 'uv1' : 'uv'}, 1.0)).xy;\n`;
       const color = settings.tint
         ? `cs2TintLayer(texture2D(${name}, v${name}Uv), ${maskTextures.length ? `texture2D(cs2Mask${i + 1}, v${name}Uv).r` : `texture2D(${name}, v${name}Uv).a`}, cs2LayerTint${i}, diffuse * vCs2ModelTint, cs2Paint, cs2LayerTint${i}Correction, cs2LayerTint${i}TintedCorrection, cs2LayerTint${i}Unmasked)`
-        : `diffuse * texture2D(${name}, v${name}Uv).rgb`;
+        : `${settings.modelTintMask ? '' : 'diffuse * '}texture2D(${name}, v${name}Uv).rgb`;
       let weight = `clamp(vCs2Blend.${i === 0 ? 'x' : 'y'}, 0.0, 1.0)`;
       if (settings.genericBlend?.mode) {
         const softness =
@@ -271,6 +286,12 @@ ${shader.fragmentShader}`;
       }
       fragment += `diffuseColor.rgb = mix(diffuseColor.rgb, ${color}, ${weight});\n`;
     });
+    if (settings.modelTintMask)
+      fragment += `vec3 cs2ModelColor = diffuse;
+        #if defined(USE_COLOR_ALPHA) || defined(USE_COLOR)
+          cs2ModelColor *= vColor.rgb;
+        #endif
+        diffuseColor.rgb *= mix(vec3(1.0), cs2ModelColor, texture2D(cs2ModelTintMask, vMapUv).r);\n`;
     shader.vertexShader = shader.vertexShader.replace(
       '#include <uv_vertex>',
       `#include <uv_vertex>\n${vertex}`,
@@ -281,6 +302,6 @@ ${shader.fragmentShader}`;
     );
   };
   material.customProgramCacheKey = () =>
-    `cs2-layers-${settings?.layers.map((l) => l.uv.channel).join('-') ?? ''}-generic-${settings?.genericBlend?.mode ?? 'none'}-tint-${!!settings?.tint}-masks-${maskTextures.length}-sun-${sun?.texture?.format ?? 'none'}-${sun?.channel ?? 0}-irradiance-${!!sun?.irradiance}-probe-${probeLighting}`;
+    `cs2-layers-${settings?.layers.map((l) => l.uv.channel).join('-') ?? ''}-generic-${settings?.genericBlend?.mode ?? 'none'}-tint-${!!settings?.tint}-masks-${maskTextures.length}-model-mask-${!!settings?.modelTintMask}-sun-${sun?.texture?.format ?? 'none'}-${sun?.channel ?? 0}-irradiance-${!!sun?.irradiance}-probe-${probeLighting}`;
   return material;
 }

@@ -196,6 +196,20 @@ shared across instance colors; masks are deduplicated lossless R8 textures.
 Unsupported atmospheric `csgo_effects` proxy polygons are omitted from the static
 analysis scene instead of appearing as opaque gray sheets. Collision is unchanged.
 
+Generic awning materials also honor `F_TINT_MASK`: the red channel of
+`g_tTintMask` controls the complete material, instance and vertex color tint.
+This fixes red wooden supports around Dust2's short stairs and A site while
+preserving the authored fabric colors. The mask uses transformed primary UVs
+for `csgo_vertexlitgeneric` and `csgo_lightmappedgeneric`; other shader families
+keep their existing interpretation. Masks share the lossless R8 cache, batch
+identity and disposal path. This adds one mask sample, with no extra geometry
+or render pass. Refresh older local packages with `bun run cs2:prepare --render`.
+Local validation checked 296 material bindings across Dust2, Mirage and Inferno:
+all 9,519,104 exported red-channel bytes matched the installed sources and every
+mask was in the package inventory. Browser checks covered the short-stairs board,
+zero/partial/full tint samples and the Textures toggle. All three maps compiled
+without GL errors and returned to zero geometry/texture allocations on unload.
+
 Dust2's dark stone strip at the CT approach to mid was missing its sand layer.
 `csgo_lightmappedgeneric` materials with `F_LAYERS` now load `g_tLayer2Color`,
 scale the transformed base UV by `g_vTexCoordScale2`, and blend with TEXCOORD4.

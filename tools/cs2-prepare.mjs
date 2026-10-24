@@ -177,7 +177,11 @@ export async function compressRenderPackage(output) {
       const settings = material.extras?.cs2;
       for (const layer of [settings?.tint?.base, ...(settings?.layers ?? []).map((l) => l.tint)])
         if (layer?.mask) files.add(layer.mask.file);
-      for (const mask of [settings?.genericBlend?.mask, settings?.genericBlend?.softnessMask])
+      for (const mask of [
+        settings?.genericBlend?.mask,
+        settings?.genericBlend?.softnessMask,
+        settings?.modelTintMask,
+      ])
         if (mask) files.add(mask.file);
     }
   }
