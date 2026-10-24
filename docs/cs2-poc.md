@@ -63,6 +63,27 @@ the measurement; static scenes still sleep. Local measurements are ignored in
 
 ## Performance and lighting pass
 
+Static props now use the map's authored light-probe lighting instead of the
+generic hemisphere fallback. This addresses Dust2's black wooden roof frames,
+street lamps and poles. The importer reads the six-direction BC6H probe atlas,
+the BC7 sun-shadow volume, volume transforms, atlas placement and precomputed
+fragment handshakes. It samples trilinear HDR irradiance using squared world-normal
+weights and keeps sun visibility separate from indirect light. An independent
+full-slice VRF decode matched 18 sampled source HDR/shadow texels; source-free
+tests cover directional lobes, HDR weights and atlas border coordinates.
+
+Sampling happens once during local preparation, on referenced vertices only.
+Each resulting vertex carries four floats, with no probe atlas, extra texture
+or extra draw pass in the browser. Dust2 bakes 1,530,144 vertices across 1,047
+primitives, adding about 23.35 MiB of lighting attributes before batching.
+At the checked B-site camera, both old and new lighting render 278 draws and
+2,180,914 triangles. This is a visual correction, not a measured FPS speedup.
+The existing Shadows control switches it in place, and map ownership disposes
+the attributes with their geometry. Old packages and unsupported probe formats
+retain fallback lighting. Probe sampling is interpolated across static geometry;
+normal maps, per-pixel probe sampling, specular reflections and local lights
+remain outside this approximation. Collision and scan data are unaffected.
+
 The October 23 render parity pass fixes a direct-light unit mismatch: Source's
 diffuse light values already account for the Lambert normalization, while Three's
 Lambert BRDF divides by PI. The indirect atlas had this conversion; the sun did

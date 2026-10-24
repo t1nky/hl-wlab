@@ -88,6 +88,8 @@ internal static class RenderExport
             File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-import/RenderIrradiance.cs")) +
             File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-import/RenderTextureBlocks.cs")) +
             File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-import/RenderSky.cs")) +
+            File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-import/RenderProbes.cs")) +
+            File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-import/RenderProbeMath.cs")) +
             File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-prepare.mjs")) +
             File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../tools/cs2-render-pack.mjs")))));
         var manifest = Path.Combine(output, "render.json");
@@ -125,6 +127,9 @@ internal static class RenderExport
         catch (Exception e) when (e is InvalidDataException or InvalidOperationException or FileNotFoundException) { warnings.Add("Baked irradiance unavailable: " + e.Message); }
         try { sky = RenderSky.Export(world, rawLoader, folder); }
         catch (Exception e) when (e is InvalidDataException or InvalidOperationException or FileNotFoundException) { warnings.Add("HDR sky unavailable: " + e.Message); }
+        RenderProbes? probes = null;
+        try { probes = RenderProbes.Load(world, rawLoader); }
+        catch (Exception e) when (e is InvalidDataException or InvalidOperationException or FileNotFoundException) { warnings.Add("Baked prop lighting unavailable: " + e.Message); }
         var nodes = world.GetWorldNodeNames().ToArray();
         var chunks = new List<string>();
         var textures = new Dictionary<string, TextureInfo>();
@@ -149,6 +154,7 @@ internal static class RenderExport
             // may share a basename with a surviving material from another directory.
             RenderSunShadows.Bind((WorldNode)node.DataBlock!, gltf, rawLoader);
             excludedLods += FilterAggregateLods((WorldNode)node.DataBlock!, gltf);
+            probes?.Bake(gltf, folder, $"chunk-{i:D3}");
             CompactGeometry(gltf, folder, $"chunk-{i:D3}");
             var images = new JsonArray(); var gltfTextures = new JsonArray(); var imageInfos = new List<TextureInfo>();
             if (gltf["materials"] is JsonArray materials)
@@ -363,7 +369,7 @@ internal static class RenderExport
             meshCount, primitives, triangleCount, texturedTriangleCount, materialCount, excludedLods, textureCount = imageContents.Count,
             maskedTintMaterials, textureBytes = imageContents.Values.Sum(t => t.Bytes),
             maskTextureCount = maskContents.Count, maskTextureBytes = maskContents.Values.Sum(t => t.Bytes), maskTextureGpuBytes = maskContents.Values.Sum(t => (long)t.GpuBytes),
-            sunShadows, irradiance, sky, environment = RenderSky.Environment(world, rawLoader),
+            sunShadows, irradiance, sky, probeLighting = probes == null ? null : new { schema = 1, vertices = probes.Vertices, primitives = probes.Primitives }, environment = RenderSky.Environment(world, rawLoader),
             textureEncoding = new { opaque = "smallest of PNG / verified lossless WebP", alpha = "PNG", pixelRoundTripVerified = true,
                 webpCount = imageContents.Values.Count(t => t.File.EndsWith(".webp")),
                 native = "Authored BC1/BC7 blocks and mips, no recompression; portable images retained for fallback",
@@ -495,7 +501,7 @@ internal static class RenderExport
                 foreach (var key in attributes.Select(pair => pair.Key).ToArray())
                 {
                     // COLOR_0 is vertex paint; TEXCOORD4 carries environment layer weights.
-                    if (key != lightUv && key is not ("POSITION" or "NORMAL" or "TEXCOORD_0" or "TEXCOORD_1" or "COLOR_0" or "_TEXCOORD_4")) attributes.Remove(key);
+                    if (key != lightUv && key is not ("POSITION" or "NORMAL" or "TEXCOORD_0" or "TEXCOORD_1" or "COLOR_0" or "_TEXCOORD_4" or "_CS2_PROBE_LIGHT")) attributes.Remove(key);
                     else attributes[key] = CopyAccessor(attributes[key]!.GetValue<int>());
                 }
                 primitive["indices"] = CopyAccessor(primitive["indices"]!.GetValue<int>());

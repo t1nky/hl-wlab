@@ -26,6 +26,7 @@ import { abortableRender, trackRenderParser } from './render-loader';
 import { type Cs2Mask, loadMaterialMask } from './render-masks';
 import { type Cs2Material, diffuseMaterial } from './render-materials';
 import { nativeTexturePlugin } from './render-native-textures';
+import { hasProbeLighting } from './render-probes';
 import { RenderResources } from './render-resources';
 import { yieldRenderTask } from './render-schedule';
 import { loadSky, type SkyMetadata } from './render-sky';
@@ -55,6 +56,7 @@ export interface RenderMetadata {
   sunShadows?: SunMetadata;
   irradiance?: IrradianceMetadata;
   sky?: SkyMetadata;
+  probeLighting?: { schema: number; vertices: number; primitives: number };
   environment?: Cs2Environment;
   runtimeBounds?: {
     geometryCount: number;
@@ -356,20 +358,27 @@ export async function loadRenderMap(
       gltf.scene.traverse((object) => {
         if (object instanceof Mesh) meshes.push(object);
       });
-      const converted = new Map<Material, Map<boolean, Material>>();
+      if (metadata.probeLighting?.schema === 1 && options.sunShadows !== false)
+        sun ??= { scale: new Vector2(1, 1), enabled: { value: 1 } };
+      const lightingMode = (geometry: BufferGeometry) => {
+        const probe = hasProbeLighting(geometry);
+        const lightmap = hasSunBinding(geometry);
+        return sun ? (probe ? 'probe' : lightmap ? 'lightmap' : 'fallback') : 'fallback';
+      };
+      const converted = new Map<Material, Map<string, Material>>();
       const materialsStart = performance.now();
       const sources = new Set(
         meshes.flatMap((object) =>
           Array.isArray(object.material) ? object.material : [object.material],
         ),
       );
-      const modes = new Map<Material, Set<boolean>>();
+      const modes = new Map<Material, Set<string>>();
       for (const object of meshes)
         for (const material of Array.isArray(object.material)
           ? object.material
           : [object.material]) {
-          const values = modes.get(material) ?? new Set<boolean>();
-          values.add(!!(hasSunBinding(object.geometry) && sun));
+          const values = modes.get(material) ?? new Set<string>();
+          values.add(lightingMode(object.geometry));
           modes.set(material, values);
         }
       let yieldAt = performance.now() + 8;
@@ -395,14 +404,15 @@ export async function loadRenderMap(
                   .map(maskTexture),
               )
             : [];
-        const variants = new Map<boolean, Material>();
+        const variants = new Map<string, Material>();
         for (const lit of modes.get(source) ?? []) {
           const material = diffuseMaterial(
             source as MeshStandardMaterial,
             settings,
             textures,
-            lit ? sun : undefined,
+            lit !== 'fallback' ? sun : undefined,
             masks,
+            lit === 'probe',
           );
           resources.material(material);
           material.clippingPlanes = clippingPlanes;
@@ -439,7 +449,7 @@ export async function loadRenderMap(
             object.geometry.setAttribute('cs2LightUv', lightUv);
             // Keep the original attribute until every object sharing this geometry is bound.
           }
-          const material = converted.get(source)?.get(!!(sun && lightUv));
+          const material = converted.get(source)?.get(lightingMode(object.geometry));
           const settings = source.userData.cs2 as Cs2Material | undefined;
           if (!material) throw Error('Missing converted render material');
           materials.push(material);

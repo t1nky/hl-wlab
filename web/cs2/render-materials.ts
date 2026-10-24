@@ -19,6 +19,7 @@ import {
 } from 'three';
 import { patchIrradiance } from './render-irradiance';
 import type { Cs2Mask } from './render-masks';
+import { patchProbeLighting } from './render-probes';
 import { patchSunVisibility, type SunLighting } from './render-sun';
 
 export interface UvSettings {
@@ -94,6 +95,7 @@ export function diffuseMaterial(
   layerTextures: Texture[] = [],
   sun?: SunLighting,
   maskTextures: Texture[] = [],
+  probeLighting = false,
 ): MeshLambertMaterial {
   const material = new MeshLambertMaterial({
     color: source.color,
@@ -114,7 +116,7 @@ export function diffuseMaterial(
     cs2Masks: maskTextures,
     cs2TexturesEnabled: { value: 1 },
     cs2Sun: sun,
-    cs2LightingMode: sun ? 'lightmap' : 'fallback',
+    cs2LightingMode: probeLighting ? 'probe' : sun ? 'lightmap' : 'fallback',
   };
   const mode = settings?.blendMode ?? 0;
   if (mode >= 3) {
@@ -133,8 +135,11 @@ export function diffuseMaterial(
   if (settings?.layers.some((layer) => layer.uv.channel === 1)) material.defines = { USE_UV1: '' };
   for (const texture of layerTextures) texture.colorSpace = SRGBColorSpace;
   material.onBeforeCompile = (shader, renderer) => {
-    if (sun) patchSunVisibility(shader, sun, renderer);
-    if (sun?.irradiance) patchIrradiance(shader, sun, renderer);
+    if (probeLighting && sun) patchProbeLighting(shader, sun.enabled);
+    else {
+      if (sun) patchSunVisibility(shader, sun, renderer);
+      if (sun?.irradiance) patchIrradiance(shader, sun, renderer);
+    }
     if (!settings || (!layerTextures.length && !settings.tint)) return;
     shader.uniforms.cs2TexturesEnabled = material.userData.cs2TexturesEnabled;
     const layers = settings.layers.slice(0, layerTextures.length);
@@ -276,6 +281,6 @@ ${shader.fragmentShader}`;
     );
   };
   material.customProgramCacheKey = () =>
-    `cs2-layers-${settings?.layers.map((l) => l.uv.channel).join('-') ?? ''}-generic-${settings?.genericBlend?.mode ?? 'none'}-tint-${!!settings?.tint}-masks-${maskTextures.length}-sun-${sun?.texture?.format ?? 'none'}-${sun?.channel ?? 0}-irradiance-${!!sun?.irradiance}`;
+    `cs2-layers-${settings?.layers.map((l) => l.uv.channel).join('-') ?? ''}-generic-${settings?.genericBlend?.mode ?? 'none'}-tint-${!!settings?.tint}-masks-${maskTextures.length}-sun-${sun?.texture?.format ?? 'none'}-${sun?.channel ?? 0}-irradiance-${!!sun?.irradiance}-probe-${probeLighting}`;
   return material;
 }

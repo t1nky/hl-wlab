@@ -70,4 +70,17 @@ Near(RenderTint.Linear(RenderTint.Srgb(wood)), wood, "Texture color space round 
 if (RenderTint.Mask(0, 1, 1) != 0 || RenderTint.Mask(1, 1, 1) != 1 || RenderTint.Mask(0.5f, 2, 0.5f) != 0.25f)
     throw new Exception("Tint mask channel/contrast/brightness mismatch");
 checks++;
-Console.WriteLine($"Render tint/sun block tests: {checks} passed (no game files required).");
+Vector3 ProbeFace(int face) => new(face + 1, 2 * face, 0.5f * face);
+Near(RenderProbeMath.Ambient(Vector3.UnitX, ProbeFace), ProbeFace(0), "Positive probe X face");
+Near(RenderProbeMath.Ambient(-Vector3.UnitX, ProbeFace), ProbeFace(3), "Negative probe X face");
+Near(RenderProbeMath.Ambient(Vector3.UnitY, ProbeFace), ProbeFace(1), "Positive probe Y face");
+Near(RenderProbeMath.Ambient(-Vector3.UnitY, ProbeFace), ProbeFace(4), "Negative probe Y face");
+Near(RenderProbeMath.Ambient(Vector3.UnitZ, ProbeFace), ProbeFace(2), "Positive probe Z face");
+Near(RenderProbeMath.Ambient(-Vector3.UnitZ, ProbeFace), ProbeFace(5), "Negative probe Z face");
+Near(RenderProbeMath.Ambient(Vector3.Normalize(new Vector3(1, -1, 0)), ProbeFace), (ProbeFace(0) + ProbeFace(4)) / 2, "Directional lobe weights sum to one and retain HDR");
+var dims = new Vector3(8, 12, 10); var probeSize = new Vector3(2, 4, 3); var offset = new Vector3(1, 5, 2);
+Near(RenderProbeMath.Coordinates(new Vector3(-1), dims, probeSize, offset, false), offset / dims, "Probe shadow coordinates clamp at local volume before atlas placement");
+Near(RenderProbeMath.Coordinates(Vector3.One * 2, dims, probeSize, offset, false), (probeSize + offset) / dims, "Probe shadow upper clamp");
+var border = (new Vector3(0.5f) / dims * probeSize + offset) / dims; border.Z /= 6;
+Near(RenderProbeMath.Coordinates(Vector3.Zero, dims, probeSize, offset, true), border, "Indirect atlas half-texel border and six stacked faces");
+Console.WriteLine($"Render tint/sun/probe tests: {checks} passed (no game files required).");

@@ -59,7 +59,7 @@ internal static class RenderSunShadows
     {
         // Mirror only the pinned exporter's naming/draw ordering. Assert correspondence;
         // material names alone cannot establish per-draw lighting or UV channels.
-        var bindings = new Dictionary<string, (Mesh Mesh, KVObject[] Draws)>();
+        var bindings = new Dictionary<string, (Mesh Mesh, KVObject[] Draws, int Probe)>();
         var resources = new List<ValveResourceFormat.Resource>();
         ValveResourceFormat.Resource Load(string name) {
             var resource = loader.LoadFileCompiled(name) ?? throw new InvalidDataException("Missing lighting source " + name);
@@ -85,8 +85,8 @@ internal static class RenderSunShadows
                     if (aggregate) {
                         var fragments = item.GetArray("m_aggregateMeshes");
                         for (var f = 0; f < fragments.Count; f++)
-                            bindings.TryAdd($"{name}_fragment{f + 1}", (mesh, [draws[fragments[f].GetInt32Property("m_nDrawCallIndex")]]));
-                    } else bindings.TryAdd(meshName, (mesh, draws));
+                            bindings.TryAdd($"{name}_fragment{f + 1}", (mesh, [draws[fragments[f].GetInt32Property("m_nDrawCallIndex")]], fragments[f].GetInt32Property("m_nLightProbeVolumePrecomputedHandshake")));
+                    } else bindings.TryAdd(meshName, (mesh, draws, item.GetInt32Property("m_nLightProbeVolumePrecomputedHandshake")));
                 }
             }
             var signatures = new Dictionary<string, VMaterial.VsInputSignature>();
@@ -108,6 +108,7 @@ internal static class RenderSunShadows
                     exportedMaterial["extras"] = new JsonObject { ["sourceMaterial"] = fullPath };
                     var mode = Mesh.HasBakedLightingFromLightMap(draw) ? "lightmap" : Mesh.HasBakedLightingFromVertexStream(draw) ? "vertex" : "probe";
                     var binding = new JsonObject { ["mode"] = mode };
+                    if (mode == "probe") binding["probeHandshake"] = source.Probe;
                     if (mode == "lightmap") {
                         if (!signatures.TryGetValue(materialPath, out var signature)) {
                             signature = ((VMaterial)Load(materialPath).DataBlock!).InputSignature;
