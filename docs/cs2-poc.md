@@ -199,9 +199,10 @@ analysis scene instead of appearing as opaque gray sheets. Collision is unchange
 Generic awning materials also honor `F_TINT_MASK`: the red channel of
 `g_tTintMask` controls the complete material, instance and vertex color tint.
 This fixes red wooden supports around Dust2's short stairs and A site while
-preserving the authored fabric colors. The mask uses transformed primary UVs
-for `csgo_vertexlitgeneric` and `csgo_lightmappedgeneric`; other shader families
-keep their existing interpretation. Masks share the lossless R8 cache, batch
+preserving the authored fabric colors. Generic, complex, foliage, simple and
+three-layer-parallax materials retain their mask interpretation. The shader's
+primary/secondary UV selection is preserved, including the parallax exception.
+Masks share the lossless R8 cache, batch
 identity and disposal path. This adds one mask sample, with no extra geometry
 or render pass. Refresh older local packages with `bun run cs2:prepare --render`.
 Local validation checked 296 material bindings across Dust2, Mirage and Inferno:
@@ -209,6 +210,31 @@ all 9,519,104 exported red-channel bytes matched the installed sources and every
 mask was in the package inventory. Browser checks covered the short-stairs board,
 zero/partial/full tint samples and the Textures toggle. All three maps compiled
 without GL errors and returned to zero geometry/texture allocations on unload.
+
+The subsequent source/export audit restores `F_NOTINT`, detail color layers,
+material decals and self-illumination. `F_NOTINT` clears the exported object and
+material RGB multiplier while preserving independent vertex paint and alpha.
+Detail MOD2X/overlay blending retains its mask, strength and distinct four-argument
+UV transform. Decals retain alpha blending or multiplication and their secondary
+UVs. Detail/decal images use linear reads; base albedo layers remain sRGB.
+Emission uses source brightness, scale, linearized tint, red mask and the albedo
+before detail/decal processing. Zero-scale emission stays off. These are surface
+operations in the existing pass, with no dynamic lights or additional shadow passes.
+Secondary UVs are identified from the source input signature and kept separately
+from lightmap coordinates, rather than assuming glTF UV1 always means material UV2.
+Repeated loads retain the first complete material snapshot: VRF's cached resource
+may already have had its texture list cleared to avoid unbounded image decoding.
+
+Installed-source validation covers Dust2 (16 detail, 54 tint-mask, 9 no-tint,
+10 decal and 1 emission materials), Mirage (15 detail, 2 tint-mask and 3 emission)
+and Inferno (2 detail, 24 tint-mask and 18 emission). All 17,286,152 checked mask
+bytes and 2,703,360 detail/decal color pixels matched their source mip exactly.
+GPU pixel checks cover neutral detail, alpha/multiply decals, emission in darkness
+and secondary-UV tinting. All three maps compile and toggle textures/shadows
+without GL errors, then release all tracked geometry/textures on unload.
+Additional textures/masks preload with root resources, share storage, and remain
+part of batch identity and cancellation cleanup. Full normal/roughness, specular,
+foliage transmission and three-layer window parallax shading remain approximations.
 
 Dust2's dark stone strip at the CT approach to mid was missing its sand layer.
 `csgo_lightmappedgeneric` materials with `F_LAYERS` now load `g_tLayer2Color`,
@@ -656,7 +682,8 @@ uses alpha as tint strength; environment color layers blend using TEXCOORD4 weig
 Generic terrain also applies its authored modulation mask and softness to those weights.
 Foliage COLOR channels encode wind rather than paint and are excluded. Other
 materials use vertex colors only when their shader enables that feature.
-Height-based blending, normal/roughness maps and skyboxes are omitted. Environment
+Height-based blending and normal/roughness maps are omitted. Authored HDR sky cubes,
+generic/complex/foliage tint masks, detail color, material decals and emission are supported. Environment
 layer color correction and tint masks, baked sun visibility and diffuse irradiance
 are supported as described above. This remains an approximation of Source
 shaders. A texture being present does not establish shader parity.

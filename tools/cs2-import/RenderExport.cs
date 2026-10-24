@@ -40,6 +40,13 @@ internal static class RenderExport
             resources.Add(resource);
             if (resource.DataBlock is VMaterial material)
             {
+                var key = (file.EndsWith("_c") ? file[..^2] : file).Replace('\\', '/');
+                // GameFileLoader can return this same already-cleared Resource again.
+                // Keep the first complete definition, rather than erasing its texture paths.
+                if (Materials.ContainsKey(key)) {
+                    material.TextureParams.Clear();
+                    return resource;
+                }
                 var color = new[] { "g_tColor", "g_tColor0", "g_tColor1", "g_tColorA", "g_tAlbedo", "g_tBaseColor" }
                     .Select(key => material.TextureParams.GetValueOrDefault(key)).FirstOrDefault(value => value != null);
                 var blend = material.ShaderName.EndsWith("static_overlay.vfx")
@@ -47,7 +54,6 @@ internal static class RenderExport
                 if (blend == 0 && material.IntParams.GetValueOrDefault("F_ALPHA_TEST") > 0) blend = 2;
                 if (blend == 0 && (material.IntParams.GetValueOrDefault("F_TRANSLUCENT") > 0 || material.ShaderName.Contains("glass"))) blend = 1;
                 var alpha = blend != 0;
-                var key = (file.EndsWith("_c") ? file[..^2] : file).Replace('\\', '/');
                 var layers = new List<string>();
                 if (material.ShaderName == "csgo_environment_blend.vfx") {
                     if (material.TextureParams.TryGetValue("g_tColor2", out var second)) layers.Add(second);
@@ -155,7 +161,6 @@ internal static class RenderExport
             RenderSunShadows.Bind((WorldNode)node.DataBlock!, gltf, rawLoader);
             excludedLods += FilterAggregateLods((WorldNode)node.DataBlock!, gltf);
             probes?.Bake(gltf, folder, $"chunk-{i:D3}");
-            CompactGeometry(gltf, folder, $"chunk-{i:D3}");
             var images = new JsonArray(); var gltfTextures = new JsonArray(); var imageInfos = new List<TextureInfo>();
             if (gltf["materials"] is JsonArray materials)
             {
@@ -189,6 +194,10 @@ internal static class RenderExport
                     var materialLinear = RenderTint.Linear(materialSrgb);
                     var amount = source.Floats.GetValueOrDefault("g_flModelTintAmount", 1f);
                     var modelTint = RenderTint.RecoverModelTint(exportedTint, materialSrgb, amount);
+                    // This shader flag disables the entire material/object RGB tint,
+                    // including colors embedded by VRF in baseColorFactor. Paint is separate.
+                    if (source.Integers.GetValueOrDefault("F_NOTINT") == 1)
+                        pbr["baseColorFactor"] = new JsonArray(1f, 1f, 1f, factor?[3]?.GetValue<float>() ?? 1f);
                     // Preserve original RGBA for affine material correction in the browser.
                     // The independent green mask is a shared R8 texture, never a color variant.
                     var maskedTint = source.Shader is "csgo_environment.vfx" or "csgo_environment_blend.vfx" && !source.KeepAlpha;
@@ -284,12 +293,46 @@ internal static class RenderExport
                     }
                     var index = AddTexture(source.Texture, source.KeepAlpha);
                     pbr["baseColorTexture"] = new JsonObject { ["index"] = index };
+                    bool Secondary(string use) => source.Integers.GetValueOrDefault("F_FORCE_UV2") == 1 ||
+                        source.Integers.GetValueOrDefault("F_SECONDARY_UV") == 1 && source.Integers.GetValueOrDefault(use) == 1;
+                    var cs2 = material["extras"]!["cs2"]!;
                     if (!maskedTint && source.Integers.GetValueOrDefault("F_TINT_MASK") == 1 &&
-                        source.Shader is "csgo_vertexlitgeneric.vfx" or "csgo_lightmappedgeneric.vfx") {
+                        source.Shader is "csgo_vertexlitgeneric.vfx" or "csgo_lightmappedgeneric.vfx" or "csgo_complex.vfx" or
+                            "csgo_foliage.vfx" or "csgo_simple.vfx" or "csgo_simple_3layer_parallax.vfx") {
                         if (!source.Textures.TryGetValue("g_tTintMask", out var tintMask))
                             throw new InvalidDataException("Missing generic model tint mask: " + source.Path);
-                        material["extras"]!["cs2"]!["modelTintMask"] = AddMask(tintMask, 0);
+                        cs2["modelTintMask"] = AddMask(tintMask, 0);
+                        cs2["modelTintSecondary"] = source.Shader != "csgo_simple_3layer_parallax.vfx" && Secondary("g_bUseSecondaryUvForTintMask");
                     }
+                    var effects = new JsonObject();
+                    var detailMode = source.Integers.GetValueOrDefault("F_DETAIL_TEXTURE");
+                    if (detailMode is 1 or 2 or 4 && source.Textures.TryGetValue("g_tDetail", out var detail)) {
+                        if (!source.Textures.TryGetValue("g_tDetailMask", out var detailMask)) throw new InvalidDataException("Missing detail mask: " + source.Path);
+                        var scale = source.Vectors.GetValueOrDefault("g_vDetailTexCoordScale", Vector4.One);
+                        var offset = source.Vectors.GetValueOrDefault("g_vDetailTexCoordOffset");
+                        effects["detail"] = new JsonObject { ["texture"] = AddTexture(detail, false), ["mask"] = AddMask(detailMask, 0),
+                            ["mode"] = detailMode == 1 ? 1 : 2, ["secondary"] = Secondary("g_bUseSecondaryUvForDetailTexture"),
+                            ["maskSecondary"] = Secondary("g_bUseSecondaryUvForDetailMask"),
+                            ["scale"] = new JsonArray(scale.X, scale.Y), ["offset"] = new JsonArray(offset.X, offset.Y),
+                            ["rotation"] = source.Floats.GetValueOrDefault("g_flDetailTexCoordRotation"),
+                            ["factor"] = source.Floats.GetValueOrDefault("g_flDetailBlendFactor", 1f),
+                            ["blendToFull"] = source.Floats.GetValueOrDefault("g_flDetailBlendToFull") };
+                    }
+                    if (source.Integers.GetValueOrDefault("F_DECAL_TEXTURE") == 1) {
+                        if (!source.Textures.TryGetValue("g_tDecal", out var decal)) throw new InvalidDataException("Missing decal texture: " + source.Path);
+                        effects["decal"] = new JsonObject { ["texture"] = AddTexture(decal, true),
+                            ["secondary"] = Secondary("g_bUseSecondaryUvForDecal"), ["mode"] = source.Integers.GetValueOrDefault("F_DECAL_BLEND_MODE") };
+                    }
+                    if (source.Integers.GetValueOrDefault("F_SELF_ILLUM") == 1 && source.Floats.GetValueOrDefault("g_flSelfIllumScale", 1f) > 0) {
+                        if (!source.Textures.TryGetValue("g_tSelfIllumMask", out var emissionMask)) throw new InvalidDataException("Missing self-illumination mask: " + source.Path);
+                        var tint = source.Vectors.GetValueOrDefault("g_vSelfIllumTint", Vector4.One);
+                        var emission = RenderTint.Linear(new Vector3(tint.X, tint.Y, tint.Z)) *
+                            (MathF.Pow(2, source.Floats.GetValueOrDefault("g_flSelfIllumBrightness")) * source.Floats.GetValueOrDefault("g_flSelfIllumScale", 1f));
+                        effects["emission"] = new JsonObject { ["mask"] = AddMask(emissionMask, 0),
+                            ["secondary"] = Secondary("g_bUseSecondaryUvForSelfIllum"), ["color"] = new JsonArray(emission.X, emission.Y, emission.Z),
+                            ["albedoFactor"] = source.Floats.GetValueOrDefault("g_flSelfIllumAlbedoFactor") };
+                    }
+                    if (effects.Count > 0) cs2["effects"] = effects;
                     foreach (var (layer, layerIndex) in source.Layers.Select((path, index) => (path, index))) {
                         var settings = new JsonObject { ["texture"] = AddTexture(layer, false, layerIndex + 2), ["uv"] = UvSettings(source, (layerIndex + 2).ToString()) };
                         if (maskedTint) settings["tint"] = TintSettings(layerIndex + 2, settings["texture"]!.GetValue<int>());
@@ -316,6 +359,7 @@ internal static class RenderExport
                     }
                 }
             }
+            CompactGeometry(gltf, folder, $"chunk-{i:D3}");
             gltf["images"] = images; gltf["textures"] = gltfTextures;
             gltf["samplers"] = new JsonArray(new JsonObject { ["magFilter"] = 9729, ["minFilter"] = 9987, ["wrapS"] = 10497, ["wrapT"] = 10497 });
             PruneMeshes(gltf, mesh => {
@@ -503,11 +547,19 @@ internal static class RenderExport
             foreach (var primitive in mesh!["primitives"]!.AsArray())
             {
                 var attributes = primitive!["attributes"]!.AsObject();
+                var settings = gltf["materials"]![primitive["material"]!.GetValue<int>()]!["extras"]?["cs2"];
+                var needsSecondary = settings?["modelTintSecondary"]?.GetValue<bool>() == true ||
+                    settings?["effects"]?.AsObject().Any(e => e.Value?["secondary"]?.GetValue<bool>() == true || e.Value?["maskSecondary"]?.GetValue<bool>() == true) == true;
+                if (needsSecondary) {
+                    var secondary = primitive["extras"]?["cs2SecondaryUv"]?.GetValue<string>();
+                    if (secondary == null || attributes[secondary] == null) throw new InvalidDataException("Missing source secondary material UV: " + mesh!["name"] + " / " + gltf["materials"]![primitive["material"]!.GetValue<int>()]!["extras"]!["sourceMaterial"] + " / " + string.Join(",", attributes.Select(a => a.Key)));
+                    attributes["_CS2_SECONDARY_UV"] = attributes[secondary]!.DeepClone();
+                }
                 var lightUv = primitive["extras"]?["cs2Lighting"]?["attribute"]?.GetValue<string>();
                 foreach (var key in attributes.Select(pair => pair.Key).ToArray())
                 {
                     // COLOR_0 is vertex paint; TEXCOORD4 carries environment layer weights.
-                    if (key != lightUv && key is not ("POSITION" or "NORMAL" or "TEXCOORD_0" or "TEXCOORD_1" or "COLOR_0" or "_TEXCOORD_4" or "_CS2_PROBE_LIGHT")) attributes.Remove(key);
+                    if (key != lightUv && key is not ("POSITION" or "NORMAL" or "TEXCOORD_0" or "TEXCOORD_1" or "COLOR_0" or "_TEXCOORD_4" or "_CS2_PROBE_LIGHT" or "_CS2_SECONDARY_UV")) attributes.Remove(key);
                     else attributes[key] = CopyAccessor(attributes[key]!.GetValue<int>());
                 }
                 primitive["indices"] = CopyAccessor(primitive["indices"]!.GetValue<int>());

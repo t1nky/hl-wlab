@@ -8,6 +8,7 @@ import {
   Matrix4,
   Mesh,
   type MeshStandardMaterial,
+  NoColorSpace,
   type Plane,
   Sphere,
   type Texture,
@@ -21,6 +22,7 @@ import type { Cs2Environment } from '../src/render/lighting';
 import { packageBase } from './package';
 import { type batchStaticMap, batchStaticMapAsync } from './render-batches';
 import { decodeRenderViews, type RenderDecodeTimings } from './render-decode';
+import { type EffectTextures, needsSecondaryUv } from './render-effects';
 import { type IrradianceMetadata, loadIrradiance } from './render-irradiance';
 import { abortableRender, trackRenderParser } from './render-loader';
 import { type Cs2Mask, loadMaterialMask } from './render-masks';
@@ -174,6 +176,7 @@ export async function loadRenderMap(
   const maskTextures = new Set<Texture>();
   group.userData.cs2MaskTextures = maskTextures;
   const maskRequests = new Map<string, Promise<Texture>>();
+  const effectDataTextures = new Map<Texture, Texture>();
   function maskTexture(mask: Cs2Mask): Promise<Texture> {
     let request = maskRequests.get(mask.file);
     if (!request) {
@@ -261,6 +264,16 @@ export async function loadRenderMap(
           const material = parser.json.materials[index];
           const settings = material.extras?.cs2 as Cs2Material | undefined;
           for (const layer of settings?.layers ?? []) indices.add(layer.texture);
+          if (settings?.effects?.detail) indices.add(settings.effects.detail.texture);
+          if (settings?.effects?.decal) indices.add(settings.effects.decal.texture);
+          for (const mask of [
+            settings?.modelTintMask,
+            settings?.genericBlend?.mask,
+            settings?.genericBlend?.softnessMask,
+            settings?.effects?.detail?.mask,
+            settings?.effects?.emission?.mask,
+          ])
+            if (mask) pending.push(maskTexture(mask));
           for (const layer of [
             settings?.tint?.base,
             ...(settings?.layers.map((l) => l.tint) ?? []),
@@ -291,6 +304,7 @@ export async function loadRenderMap(
     clearRenderGroup(group);
     maskTextures.clear();
     maskRequests.clear();
+    effectDataTextures.clear();
   };
   parentSignal?.addEventListener('abort', dispose, { once: true });
   if (parentSignal?.aborted) dispose();
@@ -407,6 +421,27 @@ export async function loadRenderMap(
         const modelTintMask = settings?.modelTintMask
           ? await maskTexture(settings.modelTintMask)
           : undefined;
+        const effectTextures: EffectTextures = {};
+        const effects = settings?.effects;
+        const effectTexture = async (index: number) => {
+          const source = (await gltf.parser.getDependency('texture', index)) as Texture;
+          signal.throwIfAborted();
+          let texture = effectDataTextures.get(source);
+          if (!texture) {
+            texture = source.clone();
+            texture.colorSpace = NoColorSpace;
+            texture.needsUpdate = true;
+            effectDataTextures.set(source, texture);
+            resources.texture(texture);
+          }
+          return texture;
+        };
+        if (effects?.detail) {
+          effectTextures.detail = await effectTexture(effects.detail.texture);
+          effectTextures.detailMask = await maskTexture(effects.detail.mask);
+        }
+        if (effects?.decal) effectTextures.decal = await effectTexture(effects.decal.texture);
+        if (effects?.emission) effectTextures.emission = await maskTexture(effects.emission.mask);
         const variants = new Map<string, Material>();
         for (const lit of modes.get(source) ?? []) {
           const material = diffuseMaterial(
@@ -417,6 +452,7 @@ export async function loadRenderMap(
             masks,
             lit === 'probe',
             modelTintMask,
+            effectTextures,
           );
           resources.material(material);
           material.clippingPlanes = clippingPlanes;
@@ -456,6 +492,11 @@ export async function loadRenderMap(
           const material = converted.get(source)?.get(lightingMode(object.geometry));
           const settings = source.userData.cs2 as Cs2Material | undefined;
           if (!material) throw Error('Missing converted render material');
+          if (needsSecondaryUv(settings?.effects, settings?.modelTintSecondary)) {
+            const secondary = object.geometry.getAttribute('_cs2_secondary_uv');
+            if (!secondary) throw Error('Missing source secondary material UV');
+            object.geometry.setAttribute('cs2SecondaryUv', secondary);
+          }
           materials.push(material);
           if (settings?.layers.length) {
             const blend =
@@ -479,7 +520,10 @@ export async function loadRenderMap(
           yieldAt = performance.now() + 8;
         }
       }
-      for (const geometry of bounded) geometry.deleteAttribute('_cs2_light_uv');
+      for (const geometry of bounded) {
+        geometry.deleteAttribute('_cs2_light_uv');
+        geometry.deleteAttribute('_cs2_secondary_uv');
+      }
       for (const source of sources) source.dispose();
       timings.materialsMs += performance.now() - materialsStart;
     }
@@ -488,6 +532,7 @@ export async function loadRenderMap(
     if (options.batch !== false) metadata.runtimeBatches = await batchStaticMapAsync(group, signal);
     signal.throwIfAborted();
     resources.retain(group);
+    effectDataTextures.clear();
     timings.totalMs = performance.now() - started;
     metadata.runtimeLoad = timings;
     metadata.runtimeDecode = decodes;

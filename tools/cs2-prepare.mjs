@@ -181,6 +181,8 @@ export async function compressRenderPackage(output) {
         settings?.genericBlend?.mask,
         settings?.genericBlend?.softnessMask,
         settings?.modelTintMask,
+        settings?.effects?.detail?.mask,
+        settings?.effects?.emission?.mask,
       ])
         if (mask) files.add(mask.file);
     }

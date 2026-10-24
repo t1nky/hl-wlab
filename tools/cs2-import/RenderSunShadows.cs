@@ -109,6 +109,18 @@ internal static class RenderSunShadows
                     var mode = Mesh.HasBakedLightingFromLightMap(draw) ? "lightmap" : Mesh.HasBakedLightingFromVertexStream(draw) ? "vertex" : "probe";
                     var binding = new JsonObject { ["mode"] = mode };
                     if (mode == "probe") binding["probeHandshake"] = source.Probe;
+                    if (!signatures.TryGetValue(materialPath, out var materialSignature)) {
+                        materialSignature = ((VMaterial)Load(materialPath).DataBlock!).InputSignature;
+                        signatures.Add(materialPath, materialSignature);
+                    }
+                    string? secondaryUv = null; var uvCounter = 0;
+                    foreach (var buffer in draw.GetArray("m_vertexBuffers"))
+                    foreach (var field in source.Mesh.VBIB.VertexBuffers[buffer.GetInt32Property("m_hBuffer")].InputLayoutFields.OrderBy(f => f.SemanticIndex).ThenBy(f => f.Offset)) {
+                        if (field.SemanticName != "TEXCOORD" || VBIB.GetFormatInfo(field).ElementCount != 2) continue;
+                        var key = "TEXCOORD_" + uvCounter++;
+                        if (VMaterial.FindD3DInputSignatureElement(materialSignature, field.SemanticName, field.SemanticIndex).Name is "vTEXCOORD1" or "vTexCoord2")
+                            secondaryUv = key;
+                    }
                     if (mode == "lightmap") {
                         if (!signatures.TryGetValue(materialPath, out var signature)) {
                             signature = ((VMaterial)Load(materialPath).DataBlock!).InputSignature;
@@ -126,7 +138,7 @@ internal static class RenderSunShadows
                         if (channel == null || primitive["attributes"]?[channel] == null) throw new InvalidDataException("Missing sunlight UV " + name);
                         binding["attribute"] = channel; binding["semantic"] = semantic; binding["storage"] = "UNORM16x2";
                     }
-                    primitive["extras"] = new JsonObject { ["cs2Lighting"] = binding };
+                    primitive["extras"] = new JsonObject { ["cs2Lighting"] = binding, ["cs2SecondaryUv"] = secondaryUv };
                 }
             }
         } finally { foreach (var resource in resources) resource.Dispose(); }

@@ -58,6 +58,24 @@ function* prepareStaticMap(group: Group) {
       shader: material.customProgramCacheKey(),
       tint: material.userData.cs2?.tint,
       genericBlend: material.userData.cs2?.genericBlend,
+      effects: material.userData.cs2?.effects && {
+        detail: material.userData.cs2.effects.detail && {
+          ...material.userData.cs2.effects.detail,
+          texture: undefined,
+          mask: undefined,
+        },
+        decal: material.userData.cs2.effects.decal && {
+          ...material.userData.cs2.effects.decal,
+          texture: undefined,
+        },
+        emission: material.userData.cs2.effects.emission && {
+          ...material.userData.cs2.effects.emission,
+          mask: undefined,
+        },
+      },
+      effectTextures: material.userData.cs2Textures
+        ?.slice(material.userData.cs2?.layers.length ?? 0)
+        .map((texture: { source: { uuid: string } }) => texture.source.uuid),
       masks: material.userData.cs2Masks?.map((texture: { uuid: string }) => texture.uuid),
       sun: material.userData.cs2Sun?.texture?.uuid,
       irradiance: material.userData.cs2Sun?.irradiance?.texture.uuid,

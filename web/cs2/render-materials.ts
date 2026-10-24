@@ -6,6 +6,7 @@ import {
   Matrix4,
   MeshLambertMaterial,
   type MeshStandardMaterial,
+  NoColorSpace,
   OneFactor,
   OneMinusSrcAlphaFactor,
   ShaderChunk,
@@ -17,6 +18,7 @@ import {
   Vector4,
   ZeroFactor,
 } from 'three';
+import { type EffectTextures, type MaterialEffects, patchMaterialEffects } from './render-effects';
 import { patchIrradiance } from './render-irradiance';
 import type { Cs2Mask } from './render-masks';
 import { patchProbeLighting } from './render-probes';
@@ -37,6 +39,8 @@ export interface Cs2Material {
   modelTintBaked?: boolean;
   tint?: { amount: number; material: [number, number, number]; base: LayerTint };
   modelTintMask?: Cs2Mask;
+  modelTintSecondary?: boolean;
+  effects?: MaterialEffects;
   uv: UvSettings;
   layers: { texture: number; uv: UvSettings; tint?: LayerTint }[];
   genericBlend?: { mode: number; softness: number; mask?: Cs2Mask; softnessMask?: Cs2Mask };
@@ -98,6 +102,7 @@ export function diffuseMaterial(
   maskTextures: Texture[] = [],
   probeLighting = false,
   modelTintMask?: Texture,
+  effectTextures: EffectTextures = {},
 ): MeshLambertMaterial {
   const material = new MeshLambertMaterial({
     color: source.color,
@@ -114,7 +119,7 @@ export function diffuseMaterial(
   material.name = source.name;
   material.userData = {
     ...source.userData,
-    cs2Textures: layerTextures,
+    cs2Textures: [...layerTextures, ...Object.values(effectTextures)],
     cs2Masks: modelTintMask ? [...maskTextures, modelTintMask] : maskTextures,
     cs2TexturesEnabled: { value: 1 },
     cs2Sun: sun,
@@ -133,17 +138,29 @@ export function diffuseMaterial(
     material.polygonOffsetFactor = -1;
     material.polygonOffsetUnits = -1;
   }
-  if (!sun && (!settings || (!layerTextures.length && !settings.tint && !settings.modelTintMask)))
+  if (
+    !sun &&
+    (!settings ||
+      (!layerTextures.length && !settings.tint && !settings.modelTintMask && !settings.effects))
+  )
     return material;
   if (settings?.layers.some((layer) => layer.uv.channel === 1)) material.defines = { USE_UV1: '' };
   for (const texture of layerTextures) texture.colorSpace = SRGBColorSpace;
+  // The reference shader reads detail/decal samples as linear data. Mid-gray
+  // detail must remain neutral under MOD2X, instead of darkening the albedo.
+  for (const texture of [effectTextures.detail, effectTextures.decal])
+    if (texture) texture.colorSpace = NoColorSpace;
   material.onBeforeCompile = (shader, renderer) => {
     if (probeLighting && sun) patchProbeLighting(shader, sun.enabled);
     else {
       if (sun) patchSunVisibility(shader, sun, renderer);
       if (sun?.irradiance) patchIrradiance(shader, sun, renderer);
     }
-    if (!settings || (!layerTextures.length && !settings.tint && !settings.modelTintMask)) return;
+    if (
+      !settings ||
+      (!layerTextures.length && !settings.tint && !settings.modelTintMask && !settings.effects)
+    )
+      return;
     shader.uniforms.cs2TexturesEnabled = material.userData.cs2TexturesEnabled;
     const layers = settings.layers.slice(0, layerTextures.length);
     if (layers.length) {
@@ -291,7 +308,7 @@ ${shader.fragmentShader}`;
         #if defined(USE_COLOR_ALPHA) || defined(USE_COLOR)
           cs2ModelColor *= vColor.rgb;
         #endif
-        diffuseColor.rgb *= mix(vec3(1.0), cs2ModelColor, texture2D(cs2ModelTintMask, vMapUv).r);\n`;
+        diffuseColor.rgb *= mix(vec3(1.0), cs2ModelColor, texture2D(cs2ModelTintMask, ${settings.modelTintSecondary ? 'vCs2SecondaryUv' : 'vMapUv'}).r);\n`;
     shader.vertexShader = shader.vertexShader.replace(
       '#include <uv_vertex>',
       `#include <uv_vertex>\n${vertex}`,
@@ -300,8 +317,9 @@ ${shader.fragmentShader}`;
       '#include <map_fragment>',
       `#include <map_fragment>\n#ifdef USE_MAP\n${settings.tint ? 'diffuseColor = vec4(1.0, 1.0, 1.0, opacity);' : ''}\nif (cs2TexturesEnabled > 0.5) { ${fragment} }\n#endif`,
     );
+    patchMaterialEffects(shader, settings.effects, effectTextures, settings.modelTintSecondary);
   };
   material.customProgramCacheKey = () =>
-    `cs2-layers-${settings?.layers.map((l) => l.uv.channel).join('-') ?? ''}-generic-${settings?.genericBlend?.mode ?? 'none'}-tint-${!!settings?.tint}-masks-${maskTextures.length}-model-mask-${!!settings?.modelTintMask}-sun-${sun?.texture?.format ?? 'none'}-${sun?.channel ?? 0}-irradiance-${!!sun?.irradiance}-probe-${probeLighting}`;
+    `cs2-layers-${settings?.layers.map((l) => l.uv.channel).join('-') ?? ''}-generic-${settings?.genericBlend?.mode ?? 'none'}-tint-${!!settings?.tint}-masks-${maskTextures.length}-model-mask-${!!settings?.modelTintMask}-${!!settings?.modelTintSecondary}-effects-${JSON.stringify([settings?.effects?.detail?.mode, settings?.effects?.detail?.secondary, settings?.effects?.detail?.maskSecondary, settings?.effects?.decal?.mode, settings?.effects?.decal?.secondary, settings?.effects?.emission?.secondary])}-sun-${sun?.texture?.format ?? 'none'}-${sun?.channel ?? 0}-irradiance-${!!sun?.irradiance}-probe-${probeLighting}`;
   return material;
 }
